@@ -5,6 +5,14 @@ import api from '../api/client';
 
 const PAGE_SIZE = 10;
 
+function formatTimeSpent(seconds) {
+  if (!seconds || seconds <= 0) return null;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 /* ─── Reusable UI Helpers ──────────────────────────────────── */
 
 function Avatar({ name, size = 'sm' }) {
@@ -1119,7 +1127,19 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
         <div className="w-[45%] bg-white flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-900">Annotations</h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-semibold text-gray-900">Annotations</h3>
+              {(() => {
+                const maxTime = Math.max(0, ...categories.map((cat) => row.annotations[String(cat.id)]?.time_spent_seconds || 0));
+                const timeStr = formatTimeSpent(maxTime);
+                return timeStr ? (
+                  <span className={`flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${maxTime >= 120 ? 'bg-red-100 text-red-700' : maxTime >= 90 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {timeStr}
+                  </span>
+                ) : null;
+              })()}
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded">Esc to close</span>
               <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg cursor-pointer">
@@ -1151,7 +1171,15 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
                     ) : (
                       <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded-full">Pending</span>
                     )}
-                    <span className="text-[10px] text-gray-400 ml-auto">{cell.annotator_username}</span>
+                    <span className="text-[10px] text-gray-400 ml-auto flex items-center gap-1.5">
+                      {formatTimeSpent(cell.time_spent_seconds) && (
+                        <span className="flex items-center gap-0.5 text-gray-400">
+                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          {formatTimeSpent(cell.time_spent_seconds)}
+                        </span>
+                      )}
+                      {cell.annotator_username}
+                    </span>
                   </div>
                   <div className="space-y-1">
                     {cell.all_options.map((opt) => {
@@ -1715,6 +1743,12 @@ function ReviewTab() {
                                     <div className="flex items-center gap-1 mb-1">
                                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cell.review_status === 'approved' ? 'bg-green-500' : 'bg-amber-400'}`} />
                                       <span className="text-[10px] text-gray-500 truncate">{cell.annotator_username}</span>
+                                      {formatTimeSpent(cell.time_spent_seconds) && (
+                                        <span className="text-[9px] text-gray-400 flex items-center gap-0.5" title="Time spent">
+                                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                          {formatTimeSpent(cell.time_spent_seconds)}
+                                        </span>
+                                      )}
                                       {cell.is_duplicate === true && (
                                         <span className="ml-auto px-1 py-0.5 bg-red-100 text-red-600 text-[9px] font-bold rounded">D</span>
                                       )}

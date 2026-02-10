@@ -93,6 +93,7 @@ class ReviewAnnotationDetail(BaseModel):
     reviewed_at: Optional[datetime]
     selected_options: list[dict]  # [{id, label}]
     all_options: list[dict]  # [{id, label, is_typical}] — all options in category for editing
+    time_spent_seconds: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -107,6 +108,7 @@ class ReviewTableCell(BaseModel):
     annotator_username: str
     is_duplicate: Optional[bool]
     review_status: Optional[str]
+    time_spent_seconds: int = 0
 
 
 class ReviewTableRow(BaseModel):

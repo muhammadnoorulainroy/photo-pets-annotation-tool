@@ -106,6 +106,67 @@ def _build_queue(db: Session, user_id: int, category_id: int) -> list[Image]:
     return queue
 
 
+# ── Time Tracking Endpoint ─────────────────────────────────────────
+
+@router.patch("/images/{image_id}/time")
+def save_time_spent(
+    image_id: int,
+    payload: dict,  # {"time_spent_seconds": int}
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """
+    Lightweight endpoint to persist time_spent_seconds for an image.
+    Updates all existing annotations for this user+image, or creates
+    a placeholder annotation (status='in_progress') for the first
+    assigned category if none exist yet.
+    Called periodically (every 10s) and on page unload.
+    """
+    time_spent = payload.get("time_spent_seconds", 0)
+    if not isinstance(time_spent, (int, float)) or time_spent < 0:
+        return {"ok": True}  # silently ignore bad data
+
+    time_spent = int(time_spent)
+
+    # Get assigned categories
+    assigned_cat_ids = [
+        ac.category_id
+        for ac in db.query(AnnotatorCategory)
+        .filter(AnnotatorCategory.user_id == user.id)
+        .all()
+    ]
+    if not assigned_cat_ids:
+        return {"ok": True}
+
+    # Update all existing annotations for this image+user
+    existing = (
+        db.query(Annotation)
+        .filter(
+            Annotation.image_id == image_id,
+            Annotation.annotator_id == user.id,
+            Annotation.category_id.in_(assigned_cat_ids),
+        )
+        .all()
+    )
+
+    if existing:
+        for ann in existing:
+            ann.time_spent_seconds = time_spent
+    else:
+        # No annotations yet — create an in_progress placeholder for the first category
+        annotation = Annotation(
+            image_id=image_id,
+            annotator_id=user.id,
+            category_id=assigned_cat_ids[0],
+            status="in_progress",
+            time_spent_seconds=time_spent,
+        )
+        db.add(annotation)
+
+    db.commit()
+    return {"ok": True}
+
+
 # ── Image-First Workflow Endpoints ─────────────────────────────────
 
 @router.get("/images")

@@ -557,6 +557,7 @@ def list_annotations_for_review(
             reviewed_at=a.reviewed_at,
             selected_options=selected_options,
             all_options=all_options,
+            time_spent_seconds=a.time_spent_seconds,
             created_at=a.created_at,
             updated_at=a.updated_at,
         ))
@@ -654,6 +655,7 @@ def review_table(
             annotator_username=a.annotator.username,
             is_duplicate=a.is_duplicate,
             review_status=a.review_status,
+            time_spent_seconds=a.time_spent_seconds,
         )
 
     # Build rows in the order of page_image_ids

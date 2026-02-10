@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
@@ -221,12 +221,65 @@ export default function ImageAnnotationPage() {
   const [showEditRequestModal, setShowEditRequestModal] = useState(false);
   const [requestingEdit, setRequestingEdit] = useState(false);
 
-  // Timer state
+  // Timer state — tracks time per image, persists to DB automatically
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
+  const elapsedRef = useRef(0); // mirrors elapsedSeconds for use in non-reactive callbacks
+  const imageIdRef = useRef(imageId); // current imageId for use in cleanup/beforeunload
 
-  // Timer is initialized from saved data in loadImage, not reset to 0 on image change
-  // (see loadImage callback below)
+  // Keep refs in sync with state
+  useEffect(() => { elapsedRef.current = elapsedSeconds; }, [elapsedSeconds]);
+  useEffect(() => { imageIdRef.current = imageId; }, [imageId]);
+
+  // Persist time to DB (fire-and-forget)
+  const persistTime = useCallback((imgId, seconds) => {
+    if (!imgId || seconds <= 0) return;
+    api.patch(`/annotator/images/${imgId}/time`, { time_spent_seconds: seconds }).catch(() => {});
+  }, []);
+
+  // Persist time using fetch+keepalive (works even during page unload)
+  const persistTimeBeacon = useCallback((imgId, seconds) => {
+    if (!imgId || seconds <= 0) return;
+    const token = localStorage.getItem('token');
+    const url = `/api/annotator/images/${imgId}/time`;
+    try {
+      fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ time_spent_seconds: seconds }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Auto-save time to DB every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      persistTime(imageIdRef.current, elapsedRef.current);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [persistTime]);
+
+  // Save time on window/tab close or browser navigation
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      persistTimeBeacon(imageIdRef.current, elapsedRef.current);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [persistTimeBeacon]);
+
+  // Save time when navigating away from this image (imageId changes)
+  const prevImageIdRef = useRef(imageId);
+  useEffect(() => {
+    const prevId = prevImageIdRef.current;
+    if (prevId && prevId !== imageId) {
+      persistTime(prevId, elapsedRef.current);
+    }
+    prevImageIdRef.current = imageId;
+  }, [imageId, persistTime]);
 
   // Timer tick
   useEffect(() => {
@@ -271,7 +324,7 @@ export default function ImageAnnotationPage() {
         }
       });
       setPendingChanges(initial);
-      // Resume timer from saved value (or start from 0 for new images)
+      // Resume timer from DB-saved value
       setElapsedSeconds(maxSavedTime);
       setShowTimeWarning(maxSavedTime >= TIMER_LIMIT_SECONDS);
     } catch (err) {
@@ -338,13 +391,21 @@ export default function ImageAnnotationPage() {
       if (data?.next_image_id) {
         navigate(`/annotator/image/${data.next_image_id}`);
       } else {
-        navigate('/annotator');
+        handleBack();
       }
     }
   };
 
   const handleNavigate = (id) => {
-    if (id) navigate(`/annotator/image/${id}`);
+    if (id) {
+      persistTime(imageId, elapsedSeconds);
+      navigate(`/annotator/image/${id}`);
+    }
+  };
+
+  const handleBack = () => {
+    persistTime(imageId, elapsedSeconds);
+    navigate('/annotator');
   };
 
   const handleMarkImproper = async (reason) => {
@@ -439,7 +500,7 @@ export default function ImageAnnotationPage() {
           <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
         </div>
         <p className="text-red-500 font-medium">{error}</p>
-        <button onClick={() => navigate('/annotator')} className="text-indigo-600 hover:underline cursor-pointer text-sm font-medium">Back to images</button>
+        <button onClick={handleBack} className="text-indigo-600 hover:underline cursor-pointer text-sm font-medium">Back to images</button>
       </div>
     );
   }
@@ -454,7 +515,7 @@ export default function ImageAnnotationPage() {
       <header className="glass border-b border-white/30 sticky top-0 z-10">
         <div className="px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => navigate('/annotator')} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition cursor-pointer">
+            <button onClick={handleBack} className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition cursor-pointer">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
