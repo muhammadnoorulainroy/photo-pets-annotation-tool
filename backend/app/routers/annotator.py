@@ -323,6 +323,7 @@ def get_image_for_annotation(
                 "status": my_ann.status,
                 "is_duplicate": my_ann.is_duplicate,
                 "selected_option_ids": sel_ids,
+                "time_spent_seconds": my_ann.time_spent_seconds,
             }
         
         categories_data.append({
@@ -467,6 +468,7 @@ def save_image_annotations(
     assigned_cat_ids = set(assigned_cat_ids_list)
     
     annotations_data = payload.get("annotations", {})
+    time_spent_seconds = payload.get("time_spent_seconds", 0)
     
     # Validate that all assigned categories have at least one option selected
     # Check for categories that are not completed by others
@@ -501,20 +503,6 @@ def save_image_annotations(
             detail=f"Please select at least one option for: {', '.join(missing_categories)}"
         )
     
-    # Validate that only one option is selected per category
-    for cat_id_str, ann_data in annotations_data.items():
-        cat_id = int(cat_id_str)
-        if cat_id not in assigned_cat_ids:
-            continue
-        selected_ids = ann_data.get("selected_option_ids", [])
-        if len(selected_ids) > 1:
-            cat = db.query(Category).filter(Category.id == cat_id).first()
-            cat_name = cat.name if cat else f"Category {cat_id}"
-            raise HTTPException(
-                status_code=400,
-                detail=f"Only one option can be selected for: {cat_name}"
-            )
-    
     saved = []
     
     for cat_id_str, ann_data in annotations_data.items():
@@ -540,6 +528,7 @@ def save_image_annotations(
         if annotation:
             annotation.is_duplicate = is_duplicate
             annotation.status = "completed"
+            annotation.time_spent_seconds = time_spent_seconds
             # Clear old selections
             db.query(AnnotationSelection).filter(
                 AnnotationSelection.annotation_id == annotation.id
@@ -551,6 +540,7 @@ def save_image_annotations(
                 category_id=cat_id,
                 is_duplicate=is_duplicate,
                 status="completed",
+                time_spent_seconds=time_spent_seconds,
             )
             db.add(annotation)
             db.flush()
@@ -752,6 +742,7 @@ def get_annotation_task(
             review_status=annotation.review_status,
             review_note=annotation.review_note,
             selected_option_ids=sel_ids,
+            time_spent_seconds=annotation.time_spent_seconds,
             created_at=annotation.created_at,
             updated_at=annotation.updated_at,
         )
@@ -835,12 +826,14 @@ def save_annotation(
                 reviewed_by=annotation.reviewed_by,
                 reviewed_at=annotation.reviewed_at,
                 selected_option_ids=option_ids,
+                time_spent_seconds=annotation.time_spent_seconds,
                 created_at=annotation.created_at,
                 updated_at=annotation.updated_at,
             )
 
         annotation.is_duplicate = payload.is_duplicate
         annotation.status = payload.status
+        annotation.time_spent_seconds = payload.time_spent_seconds
         # Clear old selections
         db.query(AnnotationSelection).filter(
             AnnotationSelection.annotation_id == annotation.id
@@ -852,6 +845,7 @@ def save_annotation(
             category_id=category_id,
             is_duplicate=payload.is_duplicate,
             status=payload.status,
+            time_spent_seconds=payload.time_spent_seconds,
         )
         db.add(annotation)
         db.flush()  # get annotation.id
@@ -871,6 +865,7 @@ def save_annotation(
         is_duplicate=annotation.is_duplicate,
         status=annotation.status,
         selected_option_ids=[s.option_id for s in annotation.selections],
+        time_spent_seconds=annotation.time_spent_seconds,
         created_at=annotation.created_at,
         updated_at=annotation.updated_at,
     )

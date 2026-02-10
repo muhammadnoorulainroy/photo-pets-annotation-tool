@@ -13,6 +13,7 @@ class Annotation(Base):
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False)
     is_duplicate = Column(Boolean, nullable=True)  # NULL = not answered
     status = Column(String(20), nullable=False, default="in_progress")  # in_progress, completed, skipped
+    time_spent_seconds = Column(Integer, nullable=False, default=0)  # cumulative time spent annotating
     review_status = Column(String(20), nullable=True)  # NULL=not reviewed, approved, rejected
     review_note = Column(Text, nullable=True)
     reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)

@@ -16,6 +16,7 @@ export default function AnnotationPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [allDone, setAllDone] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const savingRef = useRef(false);
 
@@ -28,13 +29,15 @@ export default function AnnotationPage() {
       const data = res.data;
       setTask(data);
       setQueueIndex(index);
-      // Restore previous selections if any
+      // Restore previous selections and timer if any
       if (data.current_annotation) {
         setSelectedOptions(data.current_annotation.selected_option_ids || []);
         setIsDuplicate(data.current_annotation.is_duplicate);
+        setElapsedSeconds(data.current_annotation.time_spent_seconds || 0);
       } else {
         setSelectedOptions([]);
         setIsDuplicate(null);
+        setElapsedSeconds(0);
       }
     } catch (err) {
       if (err.response?.status === 404) {
@@ -60,6 +63,20 @@ export default function AnnotationPage() {
       .catch(() => loadTask(0));
   }, [categoryId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Timer tick
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const toggleOption = (optionId) => {
     setSelectedOptions((prev) =>
       prev.includes(optionId) ? prev.filter((id) => id !== optionId) : [...prev, optionId]
@@ -75,6 +92,7 @@ export default function AnnotationPage() {
         selected_option_ids: selectedOptions,
         is_duplicate: isDuplicate,
         status,
+        time_spent_seconds: elapsedSeconds,
       });
       return true;
     } catch (err) {
@@ -244,6 +262,19 @@ export default function AnnotationPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Timer */}
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+              elapsedSeconds >= 120
+                ? 'bg-red-100 text-red-700'
+                : elapsedSeconds >= 90
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-gray-100 text-gray-600'
+            }`}>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {formatTime(elapsedSeconds)}
+            </div>
             <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
               {progress}%
             </span>

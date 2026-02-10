@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
@@ -2277,8 +2278,18 @@ function EditRequestsTab() {
 // ─── Main Dashboard ───────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('users');
+  const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  // Derive active tab from URL path: /admin/review -> 'review', /admin -> 'users'
+  const VALID_TABS = ['users', 'progress', 'review', 'completion', 'images', 'improper', 'edit-requests'];
+  const pathSegment = location.pathname.replace(/^\/admin\/?/, '').split('/')[0] || 'users';
+  const activeTab = VALID_TABS.includes(pathSegment) ? pathSegment : 'users';
+
+  const setActiveTab = (key) => {
+    navigate(key === 'users' ? '/admin' : `/admin/${key}`, { replace: false });
+  };
 
   const tabs = [
     { key: 'users', label: 'Users', icon: (

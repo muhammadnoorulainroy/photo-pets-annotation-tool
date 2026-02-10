@@ -5,20 +5,21 @@ import api from '../api/client';
 
 function CategoryDropdown({ category, annotation, completedByOther, onChange, disabled }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedOption, setSelectedOption] = useState(
-    annotation?.selected_option_ids?.[0] || null
+  const [selectedOptions, setSelectedOptions] = useState(
+    annotation?.selected_option_ids || []
   );
 
   useEffect(() => {
-    setSelectedOption(annotation?.selected_option_ids?.[0] || null);
+    setSelectedOptions(annotation?.selected_option_ids || []);
   }, [annotation]);
 
-  const selectOption = (optionId) => {
+  const toggleOption = (optionId) => {
     if (disabled) return;
-    // Single select - clicking same option deselects it, otherwise select the new one
-    const newSelected = selectedOption === optionId ? null : optionId;
-    setSelectedOption(newSelected);
-    onChange(category.id, { selected_option_ids: newSelected ? [newSelected] : [] });
+    const newSelected = selectedOptions.includes(optionId)
+      ? selectedOptions.filter((id) => id !== optionId)
+      : [...selectedOptions, optionId];
+    setSelectedOptions(newSelected);
+    onChange(category.id, { selected_option_ids: newSelected });
   };
 
   const handleToggle = (e) => {
@@ -28,7 +29,15 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
   };
 
   const isCompleted = annotation?.status === 'completed' || completedByOther;
-  const selectedLabel = category.options.find((o) => o.id === selectedOption)?.label;
+  const selectedCount = selectedOptions.length;
+  const selectedLabels = category.options
+    .filter((o) => selectedOptions.includes(o.id))
+    .map((o) => o.label);
+  const summaryText = selectedLabels.length > 0
+    ? selectedLabels.length <= 2
+      ? selectedLabels.join(', ')
+      : `${selectedLabels[0]} +${selectedLabels.length - 1} more`
+    : null;
 
   return (
     <div className={`border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm transition-all hover:shadow-md ${disabled ? 'opacity-50' : ''}`}>
@@ -41,14 +50,14 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
         <div className="flex items-center gap-3">
           <div
             className={`w-3 h-3 rounded-full shrink-0 ${
-              isCompleted ? 'bg-green-500' : selectedOption ? 'bg-amber-400' : 'bg-gray-300'
+              isCompleted ? 'bg-green-500' : selectedCount > 0 ? 'bg-amber-400' : 'bg-gray-300'
             }`}
           />
           <div className="text-left">
             <h3 className="font-medium text-gray-900 text-sm">{category.name}</h3>
-            {selectedLabel ? (
+            {summaryText ? (
               <p className="text-xs text-gray-500 mt-0.5 truncate max-w-xs">
-                {selectedLabel}
+                {summaryText}
               </p>
             ) : completedByOther ? (
               <p className="text-xs text-green-600 mt-0.5">Completed by another annotator</p>
@@ -57,14 +66,19 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
             )}
           </div>
         </div>
-        <svg
-          className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full">{selectedCount}</span>
+          )}
+          <svg
+            className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
       </button>
 
       {isOpen && (
@@ -77,14 +91,14 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
           
           <div className="space-y-2">
             {category.options.map((opt) => {
-              const isSelected = selectedOption === opt.id;
+              const isSelected = selectedOptions.includes(opt.id);
               return (
                 <div
                   key={opt.id}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    selectOption(opt.id);
+                    toggleOption(opt.id);
                   }}
                   className={`
                     flex items-center gap-3 px-3 py-2.5 rounded-lg border-2 cursor-pointer transition-all select-none
@@ -97,12 +111,14 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
                 >
                   <div
                     className={`
-                      w-5 h-5 rounded-full flex items-center justify-center border-2 shrink-0 transition-all
-                      ${isSelected ? 'border-indigo-500' : 'border-gray-300'}
+                      w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-all
+                      ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300'}
                     `}
                   >
                     {isSelected && (
-                      <div className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
                     )}
                   </div>
                   <span className="text-sm font-medium flex-1">{opt.label}</span>
@@ -209,11 +225,8 @@ export default function ImageAnnotationPage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
 
-  // Reset timer when image changes
-  useEffect(() => {
-    setElapsedSeconds(0);
-    setShowTimeWarning(false);
-  }, [imageId]);
+  // Timer is initialized from saved data in loadImage, not reset to 0 on image change
+  // (see loadImage callback below)
 
   // Timer tick
   useEffect(() => {
@@ -245,14 +258,22 @@ export default function ImageAnnotationPage() {
       setData(res.data);
       
       const initial = {};
+      let maxSavedTime = 0;
       res.data.categories.forEach((cat) => {
         if (cat.annotation) {
           initial[cat.id] = {
             selected_option_ids: cat.annotation.selected_option_ids,
           };
+          // Track the max time_spent_seconds across all categories for this image
+          if (cat.annotation.time_spent_seconds > maxSavedTime) {
+            maxSavedTime = cat.annotation.time_spent_seconds;
+          }
         }
       });
       setPendingChanges(initial);
+      // Resume timer from saved value (or start from 0 for new images)
+      setElapsedSeconds(maxSavedTime);
+      setShowTimeWarning(maxSavedTime >= TIMER_LIMIT_SECONDS);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load image');
     } finally {
@@ -300,7 +321,7 @@ export default function ImageAnnotationPage() {
     setError('');
     
     try {
-      await api.put(`/annotator/images/${imageId}/annotations`, { annotations: pendingChanges });
+      await api.put(`/annotator/images/${imageId}/annotations`, { annotations: pendingChanges, time_spent_seconds: elapsedSeconds });
       await loadImage(imageId);
       return true;
     } catch (err) {

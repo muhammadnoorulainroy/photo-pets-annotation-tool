@@ -7,6 +7,7 @@ class AnnotationSave(BaseModel):
     selected_option_ids: list[int] = []
     is_duplicate: Optional[bool] = None
     status: str = "completed"  # completed / skipped
+    time_spent_seconds: int = 0  # cumulative time spent on this annotation
 
 
 class AnnotationResponse(BaseModel):
@@ -21,6 +22,7 @@ class AnnotationResponse(BaseModel):
     reviewed_by: Optional[int] = None
     reviewed_at: Optional[datetime] = None
     selected_option_ids: list[int] = []
+    time_spent_seconds: int = 0
     created_at: datetime
     updated_at: datetime
 

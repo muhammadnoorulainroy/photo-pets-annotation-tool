@@ -26,6 +26,8 @@ def _migrate():
                 conn.execute(text("ALTER TABLE annotations ADD COLUMN reviewed_by INTEGER REFERENCES users(id)"))
             if "reviewed_at" not in existing:
                 conn.execute(text("ALTER TABLE annotations ADD COLUMN reviewed_at TIMESTAMPTZ"))
+            if "time_spent_seconds" not in existing:
+                conn.execute(text("ALTER TABLE annotations ADD COLUMN time_spent_seconds INTEGER DEFAULT 0 NOT NULL"))
         print("[MIGRATE] Checked/added review columns to annotations table")
     # Add improper columns to images table
     if "images" in inspector.get_table_names():
