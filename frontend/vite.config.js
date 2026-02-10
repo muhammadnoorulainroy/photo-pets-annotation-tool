@@ -9,4 +9,7 @@ export default defineConfig({
       '/api': process.env.VITE_API_URL || 'http://localhost:8000',
     },
   },
+  preview: {
+    allowedHosts: ['deep-research-dashboard.turing.com'],
+  },
 })

@@ -22,3 +22,6 @@ class User(Base):
     annotations = relationship(
         "Annotation", back_populates="annotator", foreign_keys="[Annotation.annotator_id]"
     )
+    edit_requests = relationship(
+        "EditRequest", back_populates="user", foreign_keys="[EditRequest.user_id]"
+    )

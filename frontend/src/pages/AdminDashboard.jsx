@@ -4,6 +4,56 @@ import api from '../api/client';
 
 const PAGE_SIZE = 10;
 
+/* ─── Reusable UI Helpers ──────────────────────────────────── */
+
+function Avatar({ name, size = 'sm' }) {
+  const colors = [
+    'from-indigo-500 to-purple-500',
+    'from-emerald-500 to-teal-500',
+    'from-amber-500 to-orange-500',
+    'from-rose-500 to-pink-500',
+    'from-cyan-500 to-blue-500',
+    'from-violet-500 to-fuchsia-500',
+  ];
+  const idx = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % colors.length;
+  const dims = size === 'lg' ? 'w-10 h-10 text-sm' : size === 'md' ? 'w-8 h-8 text-xs' : 'w-6 h-6 text-[10px]';
+  return (
+    <div className={`${dims} rounded-full bg-gradient-to-br ${colors[idx]} flex items-center justify-center text-white font-bold shrink-0 shadow-sm`}>
+      {(name || '?')[0].toUpperCase()}
+    </div>
+  );
+}
+
+function Badge({ children, variant = 'default' }) {
+  const styles = {
+    default: 'bg-gray-100 text-gray-600',
+    primary: 'bg-indigo-100 text-indigo-700',
+    success: 'bg-emerald-100 text-emerald-700',
+    warning: 'bg-amber-100 text-amber-700',
+    danger: 'bg-red-100 text-red-700',
+    purple: 'bg-purple-100 text-purple-700',
+    info: 'bg-sky-100 text-sky-700',
+  };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${styles[variant] || styles.default}`}>
+      {children}
+    </span>
+  );
+}
+
+function LoadingSkeleton({ rows = 5 }) {
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="skeleton h-8 w-48" />
+      <div className="space-y-3">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="skeleton h-14 w-full" style={{ animationDelay: `${i * 100}ms` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Pagination({ currentPage, totalPages, onPageChange }) {
   if (totalPages <= 1) return null;
 
@@ -37,7 +87,7 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
             onClick={() => onPageChange(p)}
             className={`w-8 h-8 text-sm rounded-lg cursor-pointer transition ${
               p === currentPage
-                ? 'bg-indigo-600 text-white font-medium'
+                ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium shadow-sm'
                 : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
@@ -56,39 +106,21 @@ function Pagination({ currentPage, totalPages, onPageChange }) {
   );
 }
 
-function Tabs({ active, onChange, tabs }) {
-  return (
-    <div className="flex border-b border-gray-200">
-      {tabs.map((tab) => (
-        <button
-          key={tab.key}
-          onClick={() => onChange(tab.key)}
-          className={`
-            px-5 py-3 text-sm font-medium transition border-b-2 cursor-pointer
-            ${active === tab.key
-              ? 'border-indigo-500 text-indigo-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-            }
-          `}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ─── Users Tab ────────────────────────────────────────────────
 
 function UsersTab() {
   const [users, setUsers] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [imageAssignments, setImageAssignments] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [editingAssignment, setEditingAssignment] = useState(null); // user id
+  const [editingAssignment, setEditingAssignment] = useState(null); // user id for category assignment
+  const [editingImageAssignment, setEditingImageAssignment] = useState(null); // user id for image assignment
+  const [imageCount, setImageCount] = useState(10);
   const [form, setForm] = useState({ username: '', password: '', full_name: '', role: 'annotator' });
   const [showPassword, setShowPassword] = useState(false);
   const [assignedCats, setAssignedCats] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [assigning, setAssigning] = useState(false);
 
   const generatePassword = () => {
     const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*';
@@ -100,12 +132,14 @@ function UsersTab() {
 
   const load = async () => {
     try {
-      const [usersRes, catsRes] = await Promise.all([
+      const [usersRes, catsRes, assignmentsRes] = await Promise.all([
         api.get('/admin/users'),
         api.get('/admin/categories'),
+        api.get('/admin/images/assignments'),
       ]);
       setUsers(usersRes.data);
       setCategories(catsRes.data);
+      setImageAssignments(assignmentsRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -150,15 +184,54 @@ function UsersTab() {
     );
   };
 
-  if (loading) return <div className="py-8 text-center text-gray-500">Loading...</div>;
+  // Image assignment functions
+  const getUserImageCount = (userId) => {
+    if (!imageAssignments) return 0;
+    const userAssignment = imageAssignments.by_user.find((u) => u.user_id === userId);
+    return userAssignment?.count || 0;
+  };
+
+  const openImageAssignment = (user) => {
+    setEditingImageAssignment(user.id);
+    setImageCount(10);
+  };
+
+  const assignImages = async () => {
+    if (assigning) return;
+    setAssigning(true);
+    try {
+      await api.post(`/admin/users/${editingImageAssignment}/images/assign`, { count: imageCount });
+      setEditingImageAssignment(null);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Error assigning images');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const unassignAllImages = async (userId) => {
+    if (!confirm('Are you sure you want to unassign all images from this user?')) return;
+    try {
+      await api.delete(`/admin/users/${userId}/images/unassign`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Error');
+    }
+  };
+
+  if (loading) return <LoadingSkeleton rows={6} />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-900">Users</h2>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Users & Assignments</h2>
+          <p className="text-sm text-gray-500 mt-0.5">{users.filter(u => u.role === 'annotator').length} annotators, {users.filter(u => u.role === 'admin').length} admins</p>
+        </div>
         <button
           onClick={() => setShowCreate(!showCreate)}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition cursor-pointer"
+          className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm font-medium rounded-lg hover:from-indigo-600 hover:to-purple-600 transition shadow-sm cursor-pointer"
         >
           + New Annotator
         </button>
@@ -166,7 +239,7 @@ function UsersTab() {
 
       {/* Create form */}
       {showCreate && (
-        <form onSubmit={createUser} className="bg-gray-50 rounded-xl border border-gray-200 p-5 space-y-4">
+        <form onSubmit={createUser} className="bg-gradient-to-br from-indigo-50/80 to-purple-50/50 rounded-xl border border-indigo-100 p-5 space-y-4 animate-slide-up">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
@@ -251,82 +324,184 @@ function UsersTab() {
         </form>
       )}
 
+      {/* Image Assignment Summary */}
+      {imageAssignments && (
+        <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 rounded-xl border border-indigo-100 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center text-white shadow-sm">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Image Assignment Summary</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {imageAssignments.assigned_count} of {imageAssignments.total_images} images assigned
+                  {imageAssignments.unassigned_count > 0 && (
+                    <span className="text-amber-600 ml-1 font-medium">
+                      ({imageAssignments.unassigned_count} available)
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-32 bg-white/80 rounded-full h-2.5 shadow-inner">
+                <div
+                  className="bg-gradient-to-r from-indigo-500 to-purple-500 h-2.5 rounded-full transition-all animate-progress"
+                  style={{ width: `${imageAssignments.total_images > 0 ? (imageAssignments.assigned_count / imageAssignments.total_images) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-indigo-600">
+                {imageAssignments.total_images > 0 ? Math.round((imageAssignments.assigned_count / imageAssignments.total_images) * 100) : 0}%
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Users table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-50 text-gray-600 text-left">
-              <th className="px-5 py-3 font-medium">Username</th>
+            <tr className="bg-gradient-to-r from-gray-50 to-gray-50/80 text-gray-600 text-left">
+              <th className="px-5 py-3.5 font-semibold">Username</th>
               <th className="px-5 py-3 font-medium">Name</th>
               <th className="px-5 py-3 font-medium">Role</th>
               <th className="px-5 py-3 font-medium">Categories</th>
+              <th className="px-5 py-3 font-medium">Images</th>
+              <th className="px-5 py-3 font-medium">Progress</th>
+              <th className="px-5 py-3 font-medium">Improper</th>
               <th className="px-5 py-3 font-medium">Status</th>
               <th className="px-5 py-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {users.map((u) => (
-              <tr key={u.id} className={!u.is_active ? 'opacity-50' : ''}>
-                <td className="px-5 py-3 font-medium text-gray-900">{u.username}</td>
-                <td className="px-5 py-3 text-gray-600">{u.full_name || '—'}</td>
-                <td className="px-5 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-                  }`}>
-                    {u.role}
-                  </span>
-                </td>
-                <td className="px-5 py-3 text-gray-600">
-                  {u.role === 'annotator' ? (
-                    <div className="flex flex-wrap gap-1">
-                      {u.assigned_category_ids.length === 0 ? (
-                        <span className="text-gray-400">None</span>
-                      ) : (
-                        u.assigned_category_ids.map((catId) => {
-                          const cat = categories.find((c) => c.id === catId);
-                          return (
-                            <span key={catId} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">
-                              {cat?.name || catId}
-                            </span>
-                          );
-                        })
-                      )}
+            {users.map((u) => {
+              const userImageCount = getUserImageCount(u.id);
+              return (
+                <tr key={u.id} className={`transition-colors hover:bg-gray-50/50 ${!u.is_active ? 'opacity-50' : ''}`}>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar name={u.username} size="sm" />
+                      <span className="font-medium text-gray-900">{u.username}</span>
                     </div>
-                  ) : '—'}
-                </td>
-                <td className="px-5 py-3">
-                  <span className={`text-xs font-medium ${u.is_active ? 'text-green-600' : 'text-red-500'}`}>
-                    {u.is_active ? 'Active' : 'Disabled'}
-                  </span>
-                </td>
-                <td className="px-5 py-3">
-                  <div className="flex gap-2">
-                    {u.role === 'annotator' && (
+                  </td>
+                  <td className="px-5 py-3 text-gray-600">{u.full_name || '—'}</td>
+                  <td className="px-5 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3 text-gray-600">
+                    {u.role === 'annotator' ? (
+                      <div className="flex flex-wrap gap-1">
+                        {u.assigned_category_ids.length === 0 ? (
+                          <span className="text-gray-400">None</span>
+                        ) : (
+                          u.assigned_category_ids.map((catId) => {
+                            const cat = categories.find((c) => c.id === catId);
+                            return (
+                              <span key={catId} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">
+                                {cat?.name || catId}
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : '—'}
+                  </td>
+                  <td className="px-5 py-3">
+                    {u.role === 'annotator' ? (
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        userImageCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {userImageCount} images
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-5 py-3">
+                    {u.role === 'annotator' ? (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-indigo-500 h-2 rounded-full transition-all"
+                              style={{ width: `${u.total_annotations_needed > 0 ? Math.min(100, (u.completed_annotations / u.total_annotations_needed) * 100) : 0}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {u.total_annotations_needed > 0 ? Math.round((u.completed_annotations / u.total_annotations_needed) * 100) : 0}%
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-400">
+                          {u.completed_annotations}/{u.total_annotations_needed} annotations
+                        </span>
+                      </div>
+                    ) : '—'}
+                  </td>
+                  <td className="px-5 py-3">
+                    {u.role === 'annotator' ? (
+                      u.improper_marked_count > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                          {u.improper_marked_count} marked
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">None</span>
+                      )
+                    ) : '—'}
+                  </td>
+                  <td className="px-5 py-3">
+                    <span className={`text-xs font-medium ${u.is_active ? 'text-green-600' : 'text-red-500'}`}>
+                      {u.is_active ? 'Active' : 'Disabled'}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex gap-2 flex-wrap">
+                      {u.role === 'annotator' && (
+                        <>
+                          <button
+                            onClick={() => openAssignment(u)}
+                            className="text-indigo-600 hover:text-indigo-800 text-xs font-medium cursor-pointer"
+                          >
+                            Categories
+                          </button>
+                          <button
+                            onClick={() => openImageAssignment(u)}
+                            className="text-emerald-600 hover:text-emerald-800 text-xs font-medium cursor-pointer"
+                          >
+                            + Images
+                          </button>
+                          {userImageCount > 0 && (
+                            <button
+                              onClick={() => unassignAllImages(u.id)}
+                              className="text-amber-600 hover:text-amber-800 text-xs font-medium cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </>
+                      )}
                       <button
-                        onClick={() => openAssignment(u)}
-                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium cursor-pointer"
+                        onClick={() => toggleActive(u)}
+                        className={`text-xs font-medium cursor-pointer ${u.is_active ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800'}`}
                       >
-                        Assign
+                        {u.is_active ? 'Disable' : 'Enable'}
                       </button>
-                    )}
-                    <button
-                      onClick={() => toggleActive(u)}
-                      className={`text-xs font-medium cursor-pointer ${u.is_active ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800'}`}
-                    >
-                      {u.is_active ? 'Disable' : 'Enable'}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       {/* Assignment modal */}
       {editingAssignment && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md animate-scale-in">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Assign Categories
             </h3>
@@ -377,6 +552,96 @@ function UsersTab() {
           </div>
         </div>
       )}
+
+      {/* Image Assignment modal */}
+      {editingImageAssignment && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md animate-scale-in">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Assign Images
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Assign unassigned images to{' '}
+              <span className="font-medium text-gray-900">
+                {users.find((u) => u.id === editingImageAssignment)?.username}
+              </span>
+            </p>
+            
+            {imageAssignments && (
+              <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-gray-600">
+                  <span className="font-semibold text-emerald-600">{imageAssignments.unassigned_count}</span> images available for assignment
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Each image can only be assigned to one annotator
+                </p>
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Number of images to assign
+              </label>
+              <input
+                type="number"
+                min="1"
+                max={imageAssignments?.unassigned_count || 100}
+                value={imageCount}
+                onChange={(e) => setImageCount(parseInt(e.target.value) || 1)}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Images will be assigned in order (lowest ID first)
+              </p>
+            </div>
+
+            {/* Quick buttons */}
+            <div className="flex gap-2 mb-4">
+              {[5, 10, 20, 50].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setImageCount(n)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition cursor-pointer ${
+                    imageCount === n
+                      ? 'bg-emerald-500 text-white border-emerald-500'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+              {imageAssignments?.unassigned_count > 0 && (
+                <button
+                  onClick={() => setImageCount(imageAssignments.unassigned_count)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition cursor-pointer ${
+                    imageCount === imageAssignments.unassigned_count
+                      ? 'bg-emerald-500 text-white border-emerald-500'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  All ({imageAssignments.unassigned_count})
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={assignImages}
+                disabled={assigning || imageCount <= 0 || (imageAssignments?.unassigned_count || 0) === 0}
+                className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {assigning ? 'Assigning...' : `Assign ${imageCount} Images`}
+              </button>
+              <button
+                onClick={() => setEditingImageAssignment(null)}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -394,43 +659,51 @@ function ProgressTab() {
     });
   }, []);
 
-  if (loading) return <div className="py-8 text-center text-gray-500">Loading...</div>;
+  if (loading) return <LoadingSkeleton rows={6} />;
 
   if (progress.length === 0) {
     return (
-      <div className="py-12 text-center text-gray-500">
-        <p className="text-lg">No assignments yet.</p>
-        <p className="text-sm mt-1">Create annotators and assign categories to see progress here.</p>
+      <div className="py-16 text-center animate-fade-in">
+        <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-2xl flex items-center justify-center">
+          <svg className="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+        </div>
+        <p className="text-lg font-medium text-gray-700">No assignments yet</p>
+        <p className="text-sm text-gray-500 mt-1">Create annotators and assign categories to see progress here.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-gray-900">Annotation Progress</h2>
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <div className="space-y-6 animate-fade-in">
+      <h2 className="text-lg font-bold text-gray-900">Annotation Progress</h2>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-50 text-gray-600 text-left">
-              <th className="px-5 py-3 font-medium">Annotator</th>
-              <th className="px-5 py-3 font-medium">Category</th>
-              <th className="px-5 py-3 font-medium">Progress</th>
-              <th className="px-5 py-3 font-medium">Completed</th>
-              <th className="px-5 py-3 font-medium">Skipped</th>
-              <th className="px-5 py-3 font-medium">Pending</th>
+            <tr className="bg-gradient-to-r from-gray-50 to-gray-50/80 text-gray-600 text-left">
+              <th className="px-5 py-3.5 font-semibold">Annotator</th>
+              <th className="px-5 py-3.5 font-semibold">Category</th>
+              <th className="px-5 py-3.5 font-semibold">Progress</th>
+              <th className="px-5 py-3.5 font-semibold">Completed</th>
+              <th className="px-5 py-3.5 font-semibold">Skipped</th>
+              <th className="px-5 py-3.5 font-semibold">Pending</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {progress.map((p, i) => {
               const pct = p.total_images > 0 ? Math.round((p.completed / p.total_images) * 100) : 0;
               return (
-                <tr key={i}>
-                  <td className="px-5 py-3 font-medium text-gray-900">{p.annotator_username}</td>
-                  <td className="px-5 py-3 text-gray-600">{p.category_name}</td>
+                <tr key={i} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <Avatar name={p.annotator_username} size="sm" />
+                      <span className="font-medium text-gray-900">{p.annotator_username}</span>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3"><Badge variant="primary">{p.category_name}</Badge></td>
                   <td className="px-5 py-3 w-48">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-gray-200 rounded-full h-2">
-                        <div className="bg-indigo-500 h-2 rounded-full" style={{ width: `${pct}%` }} />
+                        <div className="bg-gradient-to-r from-indigo-500 to-purple-500 h-2 rounded-full animate-progress" style={{ width: `${pct}%` }} />
                       </div>
                       <span className="text-xs text-gray-500 w-10 text-right">{pct}%</span>
                     </div>
@@ -463,7 +736,7 @@ function ImageCompletionTab() {
     });
   }, []);
 
-  if (loading) return <div className="py-8 text-center text-gray-500">Loading...</div>;
+  if (loading) return <LoadingSkeleton rows={4} />;
 
   const filtered = images.filter((img) => {
     if (filter === 'complete') return img.is_fully_complete;
@@ -508,17 +781,18 @@ function ImageCompletionTab() {
       </div>
 
       {/* Overall progress bar */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <div className="flex justify-between text-sm text-gray-600 mb-2">
-          <span>Overall Completion</span>
-          <span>{images.length > 0 ? Math.round((totalComplete / images.length) * 100) : 0}%</span>
+      <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-xl p-5 text-white shadow-lg">
+        <div className="flex justify-between text-sm mb-3">
+          <span className="font-medium">Overall Completion</span>
+          <span className="text-lg font-bold">{images.length > 0 ? Math.round((totalComplete / images.length) * 100) : 0}%</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-3">
+        <div className="w-full bg-white/20 rounded-full h-3">
           <div
-            className="bg-green-500 h-3 rounded-full transition-all"
+            className="bg-white h-3 rounded-full transition-all animate-progress"
             style={{ width: `${images.length > 0 ? (totalComplete / images.length) * 100 : 0}%` }}
           />
         </div>
+        <p className="text-sm text-white/70 mt-2">{totalComplete} of {images.length} images fully annotated</p>
       </div>
 
       {/* Image cards */}
@@ -616,7 +890,7 @@ function ImagesTab() {
     });
   }, []);
 
-  if (loading) return <div className="py-8 text-center text-gray-500">Loading...</div>;
+  if (loading) return <LoadingSkeleton rows={3} />;
 
   const totalPages = Math.max(1, Math.ceil(images.length / imagesPerPage));
   const safePage = Math.min(page, totalPages);
@@ -1255,21 +1529,25 @@ function ReviewTab() {
     <div className="space-y-4">
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-4 stagger-children">
           {[
-            { label: 'Pending Review', value: stats.pending_review, key: 'pending', active: 'border-amber-400 bg-amber-50' },
-            { label: 'Approved', value: stats.approved, key: 'approved', active: 'border-green-400 bg-green-50' },
-            { label: 'Total Completed', value: stats.total_completed, key: null, active: '' },
+            { label: 'Pending Review', value: stats.pending_review, key: 'pending', icon: '⏳', gradient: 'from-amber-500 to-orange-500', activeBorder: 'ring-2 ring-amber-400 ring-offset-2' },
+            { label: 'Approved', value: stats.approved, key: 'approved', icon: '✓', gradient: 'from-emerald-500 to-teal-500', activeBorder: 'ring-2 ring-emerald-400 ring-offset-2' },
+            { label: 'Total Completed', value: stats.total_completed, key: null, icon: '📊', gradient: 'from-indigo-500 to-purple-500', activeBorder: '' },
           ].map((s) => (
             <button
               key={s.label}
               onClick={() => s.key && handleFilterChange(s.key)}
-              className={`p-4 rounded-xl border text-left transition ${
-                s.key === filter ? s.active : 'border-gray-200 bg-white hover:border-gray-300'
+              className={`relative overflow-hidden p-5 rounded-xl border border-gray-200 bg-white text-left transition-all animate-slide-up shadow-sm hover:shadow-md ${
+                s.key === filter ? s.activeBorder : ''
               } ${s.key ? 'cursor-pointer' : 'cursor-default'}`}
             >
+              <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br ${s.gradient} opacity-10 rounded-bl-[40px] -mr-2 -mt-2`} />
+              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${s.gradient} flex items-center justify-center text-white text-sm mb-3 shadow-sm`}>
+                {s.icon}
+              </div>
               <p className="text-2xl font-bold text-gray-900">{s.value}</p>
-              <p className="text-xs text-gray-500 mt-1">{s.label}</p>
+              <p className="text-xs text-gray-500 mt-1 font-medium">{s.label}</p>
             </button>
           ))}
         </div>
@@ -1633,7 +1911,7 @@ function ReviewTab() {
 
       {/* ─── Floating bulk approve bar ──────────────────── */}
       {selectedRows.size > 0 && viewMode === 'table' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-xl shadow-2xl px-6 py-3 flex items-center gap-4">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-2xl shadow-2xl px-6 py-3 flex items-center gap-4 animate-slide-up border border-gray-700">
           <span className="text-sm">
             <span className="font-bold">{selectedRows.size}</span> image{selectedRows.size > 1 ? 's' : ''} selected
             {selectedPendingCount > 0 && <span className="text-gray-400 ml-1">({selectedPendingCount} pending annotations)</span>}
@@ -1675,6 +1953,327 @@ function ReviewTab() {
   );
 }
 
+
+// ─── Improper Images Tab ─────────────────────────────────────
+
+function ImproperImagesTab() {
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [count, setCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const imagesPerPage = 10;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [imagesRes, countRes] = await Promise.all([
+        api.get(`/admin/images/improper?page=${page}&page_size=${imagesPerPage}`),
+        api.get("/admin/images/improper/count"),
+      ]);
+      setImages(imagesRes.data.images);
+      setTotal(imagesRes.data.total);
+      setCount(countRes.data.count);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [page]);
+
+  const revokeImproper = async (imageId) => {
+    if (!confirm("Are you sure you want to mark this image as proper again?")) return;
+    try {
+      await api.put(`/admin/images/${imageId}/revoke-improper`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to revoke improper status");
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / imagesPerPage));
+
+  if (loading && images.length === 0) {
+    return <LoadingSkeleton rows={3} />;
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Improper Images</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Images flagged by annotators as improper - review and revoke if needed
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+            count > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+          }`}>
+            {count} improper image{count !== 1 ? "s" : ""}
+          </span>
+        </div>
+      </div>
+
+      {images.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <div className="text-gray-400 text-5xl mb-4">✓</div>
+          <h3 className="text-lg font-medium text-gray-700">No improper images</h3>
+          <p className="text-gray-500 mt-1">All images are marked as proper.</p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {images.map((img) => (
+              <div key={img.id} className="bg-white rounded-xl border border-red-200 overflow-hidden">
+                <div className="flex items-start gap-4 p-4">
+                  <img
+                    src={img.url}
+                    alt={img.filename}
+                    className="w-32 h-32 rounded-lg object-cover shrink-0 ring-2 ring-red-200"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-medium text-gray-900">{img.filename}</span>
+                      <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">
+                        Improper
+                      </span>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-3 mb-3 border border-red-100">
+                      <p className="text-sm text-gray-700 font-medium mb-1">Reason:</p>
+                      <p className="text-sm text-gray-600">{img.improper_reason || "No reason provided"}</p>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <span>
+                        Marked by: <span className="font-medium text-gray-700">{img.marked_improper_by || "Unknown"}</span>
+                      </span>
+                      {img.marked_improper_at && (
+                        <span>
+                          on {new Date(img.marked_improper_at).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <button
+                      onClick={() => revokeImproper(img.id)}
+                      className="px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition cursor-pointer flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Mark as Proper
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <span>Showing {((page - 1) * imagesPerPage) + 1}–{Math.min(page * imagesPerPage, total)} of {total}</span>
+              <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+// ─── Edit Requests Tab ───────────────────────────────────────
+
+function EditRequestsTab() {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0 });
+  const [filter, setFilter] = useState('pending');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const perPage = 10;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [reqRes, countRes] = await Promise.all([
+        api.get(`/admin/edit-requests?status_filter=${filter}&page=${page}&page_size=${perPage}`),
+        api.get('/admin/edit-requests/count'),
+      ]);
+      setRequests(reqRes.data.requests);
+      setTotal(reqRes.data.total);
+      setCounts(countRes.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [filter, page]);
+
+  const handleApprove = async (requestId) => {
+    try {
+      await api.put(`/admin/edit-requests/${requestId}/approve`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to approve');
+    }
+  };
+
+  const handleReject = async (requestId) => {
+    if (!confirm('Are you sure you want to reject this edit request?')) return;
+    try {
+      await api.put(`/admin/edit-requests/${requestId}/reject`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to reject');
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+
+  if (loading && requests.length === 0) {
+    return <LoadingSkeleton rows={3} />;
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Edit Requests</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Annotators requesting permission to edit completed annotations
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {counts.pending > 0 && (
+            <span className="px-3 py-1.5 rounded-full text-sm font-medium bg-amber-100 text-amber-700">
+              {counts.pending} pending
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4 stagger-children">
+        {[
+          { label: 'Pending', value: counts.pending, key: 'pending', icon: '⏳', gradient: 'from-amber-500 to-orange-500', activeBorder: 'ring-2 ring-amber-400 ring-offset-2' },
+          { label: 'Approved', value: counts.approved, key: 'approved', icon: '✓', gradient: 'from-emerald-500 to-teal-500', activeBorder: 'ring-2 ring-emerald-400 ring-offset-2' },
+          { label: 'Rejected', value: counts.rejected, key: 'rejected', icon: '✗', gradient: 'from-red-500 to-rose-500', activeBorder: 'ring-2 ring-red-400 ring-offset-2' },
+        ].map((s) => (
+          <button
+            key={s.key}
+            onClick={() => { setFilter(s.key); setPage(1); }}
+            className={`relative overflow-hidden p-5 rounded-xl border border-gray-200 bg-white text-left transition-all animate-slide-up shadow-sm hover:shadow-md cursor-pointer ${
+              filter === s.key ? s.activeBorder : ''
+            }`}
+          >
+            <div className={`absolute top-0 right-0 w-20 h-20 bg-gradient-to-br ${s.gradient} opacity-10 rounded-bl-[40px] -mr-2 -mt-2`} />
+            <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${s.gradient} flex items-center justify-center text-white text-sm mb-3 shadow-sm`}>
+              {s.icon}
+            </div>
+            <p className="text-2xl font-bold text-gray-900">{s.value}</p>
+            <p className="text-xs text-gray-500 mt-1 font-medium">{s.label}</p>
+          </button>
+        ))}
+      </div>
+
+      {requests.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <div className="text-gray-400 text-5xl mb-4">📝</div>
+          <h3 className="text-lg font-medium text-gray-700">No {filter} edit requests</h3>
+          <p className="text-gray-500 mt-1">
+            {filter === 'pending' ? 'All edit requests have been processed.' : `No ${filter} requests found.`}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {requests.map((req) => (
+              <div key={req.id} className={`bg-white rounded-xl border overflow-hidden ${
+                req.status === 'pending' ? 'border-amber-200' 
+                  : req.status === 'approved' ? 'border-green-200' 
+                    : 'border-red-200'
+              }`}>
+                <div className="flex items-start gap-4 p-4">
+                  <img
+                    src={req.image_url}
+                    alt={req.image_filename}
+                    className="w-24 h-24 rounded-lg object-cover shrink-0 ring-1 ring-gray-200"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-medium text-gray-900">{req.image_filename}</span>
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                        req.status === 'pending' ? 'bg-amber-100 text-amber-700'
+                          : req.status === 'approved' ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
+                      }`}>
+                        {req.status}
+                      </span>
+                    </div>
+                    
+                    <p className="text-sm text-gray-600 mb-2">
+                      <span className="font-medium">{req.username}</span> requested to edit
+                    </p>
+                    
+                    <div className="bg-gray-50 rounded-lg p-3 mb-2 border border-gray-100">
+                      <p className="text-sm text-gray-700 font-medium mb-1">Reason:</p>
+                      <p className="text-sm text-gray-600">{req.reason || 'No reason provided'}</p>
+                    </div>
+                    
+                    <div className="flex items-center gap-4 text-xs text-gray-500">
+                      <span>Requested: {new Date(req.created_at).toLocaleString()}</span>
+                      {req.reviewed_by && (
+                        <span>
+                          Reviewed by: <span className="font-medium text-gray-700">{req.reviewed_by}</span>
+                        </span>
+                      )}
+                    </div>
+                    
+                    {req.review_note && (
+                      <div className="mt-2 text-xs text-gray-600 italic">
+                        Admin note: {req.review_note}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {req.status === 'pending' && (
+                    <div className="shrink-0 flex flex-col gap-2">
+                      <button
+                        onClick={() => handleApprove(req.id)}
+                        className="px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 transition cursor-pointer"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleReject(req.id)}
+                        className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 transition cursor-pointer"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <span>Showing {((page - 1) * perPage) + 1}–{Math.min(page * perPage, total)} of {total}</span>
+              <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -1682,47 +2281,93 @@ export default function AdminDashboard() {
   const { user, logout } = useAuth();
 
   const tabs = [
-    { key: 'users', label: 'Users & Assignments' },
-    { key: 'progress', label: 'Progress' },
-    { key: 'review', label: 'Review' },
-    { key: 'completion', label: 'Image Status' },
-    { key: 'images', label: 'Images' },
+    { key: 'users', label: 'Users', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+    )},
+    { key: 'progress', label: 'Progress', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+    )},
+    { key: 'review', label: 'Review', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+    )},
+    { key: 'completion', label: 'Image Status', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+    )},
+    { key: 'images', label: 'Images', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+    )},
+    { key: 'improper', label: 'Improper', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+    )},
+    { key: 'edit-requests', label: 'Edit Requests', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+    )},
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Admin Dashboard</h1>
-            <p className="text-sm text-gray-500">{user?.username}</p>
+    <div className="min-h-screen mesh-bg flex">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col shrink-0 sticky top-0 h-screen">
+        {/* Logo */}
+        <div className="px-5 py-5 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm">
+              <span className="text-white text-sm">🐾</span>
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-gray-900 leading-tight">Photo Pets</h1>
+              <p className="text-[11px] text-gray-400 font-medium">Admin Dashboard</p>
+            </div>
           </div>
-          <button
-            onClick={logout}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition cursor-pointer"
-          >
-            Sign Out
-          </button>
         </div>
-      </header>
 
-      {/* Tabs bar */}
-      <div className="mx-auto px-6 pt-6">
-        <div className="bg-white rounded-t-xl shadow-sm border border-gray-200 border-b-0 overflow-hidden">
-          <Tabs active={activeTab} onChange={setActiveTab} tabs={tabs} />
-        </div>
-      </div>
+        {/* Nav items */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
+                activeTab === tab.key
+                  ? 'bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 sidebar-active shadow-sm'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              }`}
+            >
+              <span className={activeTab === tab.key ? 'text-indigo-600' : 'text-gray-400'}>{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-      {/* Tab content */}
-      <main className="px-6 pb-6">
-        <div className="bg-white border border-gray-200 border-t-0 rounded-b-xl shadow-sm overflow-hidden">
-          <div className={activeTab === 'review' ? 'p-4' : 'p-6'}>
-            {activeTab === 'users' && <UsersTab />}
-            {activeTab === 'progress' && <ProgressTab />}
-            {activeTab === 'review' && <ReviewTab />}
-            {activeTab === 'completion' && <ImageCompletionTab />}
-            {activeTab === 'images' && <ImagesTab />}
+        {/* User section */}
+        <div className="border-t border-gray-100 p-4">
+          <div className="flex items-center gap-3">
+            <Avatar name={user?.username} size="md" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">{user?.username}</p>
+              <p className="text-[11px] text-gray-400">Administrator</p>
+            </div>
+            <button
+              onClick={logout}
+              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition cursor-pointer"
+              title="Sign out"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            </button>
           </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 min-w-0">
+        <div className={activeTab === 'review' ? 'p-5' : 'p-6'}>
+          {activeTab === 'users' && <UsersTab />}
+          {activeTab === 'progress' && <ProgressTab />}
+          {activeTab === 'review' && <ReviewTab />}
+          {activeTab === 'completion' && <ImageCompletionTab />}
+          {activeTab === 'images' && <ImagesTab />}
+          {activeTab === 'improper' && <ImproperImagesTab />}
+          {activeTab === 'edit-requests' && <EditRequestsTab />}
         </div>
       </main>
     </div>

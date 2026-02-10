@@ -17,6 +17,7 @@ CATEGORIES_DATA = [
             ("Harsh outdoor sunlight with shadows", False),
             ("Low light conditions", False),
             ("Well-lit conditions (typical)", True),
+            ("None of the Above", False),
         ],
     },
     {
@@ -28,6 +29,7 @@ CATEGORIES_DATA = [
             ("No head showing", False),
             ("Partial view (head only)", False),
             ("Top-down view", False),
+            ("None of the Above", False),
         ],
     },
     {
@@ -40,6 +42,7 @@ CATEGORIES_DATA = [
             ("Snow environment", False),
             ("Vet clinic", False),
             ("Yard with a complex background", False),
+            ("None of the Above", False),
         ],
     },
     {
@@ -51,6 +54,7 @@ CATEGORIES_DATA = [
             ("Partially hidden under a blanket", False),
             ("Peeking out of box-carrier", False),
             ("Toy obscuring part of body", False),
+            ("None of the Above", False),
         ],
     },
     {
@@ -63,6 +67,7 @@ CATEGORIES_DATA = [
             ("Running with motion blur", False),
             ("Sitting still-posed (typical)", True),
             ("Sleeping-curled up", False),
+            ("None of the Above", False),
         ],
     },
     {
@@ -73,6 +78,7 @@ CATEGORIES_DATA = [
             ("Single pet (typical)", True),
             ("Three pets of same breed", False),
             ("Two similar-looking pets together", False),
+            ("None of the Above", False),
         ],
     },
 ]
@@ -127,6 +133,26 @@ def seed_database(db: Session):
                 db.add(option)
         db.commit()
         print(f"[SEED] Created {len(CATEGORIES_DATA)} categories with options")
+    else:
+        # Add "None of the Above" option to existing categories if missing
+        categories = db.query(Category).all()
+        added_count = 0
+        for category in categories:
+            existing_labels = {opt.label for opt in category.options}
+            if "None of the Above" not in existing_labels:
+                # Find the max display_order for this category
+                max_order = max((opt.display_order for opt in category.options), default=0)
+                option = Option(
+                    category_id=category.id,
+                    label="None of the Above",
+                    is_typical=False,
+                    display_order=max_order + 1,
+                )
+                db.add(option)
+                added_count += 1
+        if added_count > 0:
+            db.commit()
+            print(f"[SEED] Added 'None of the Above' option to {added_count} categories")
 
     # Seed mock images
     if db.query(Image).count() == 0:

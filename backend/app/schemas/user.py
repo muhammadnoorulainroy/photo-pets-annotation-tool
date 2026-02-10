@@ -24,6 +24,11 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     assigned_category_ids: list[int] = []
+    # Progress stats
+    assigned_image_count: int = 0
+    completed_annotations: int = 0
+    total_annotations_needed: int = 0  # assigned_images * assigned_categories
+    improper_marked_count: int = 0
 
     class Config:
         from_attributes = True

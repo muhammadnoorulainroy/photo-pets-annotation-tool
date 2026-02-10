@@ -7,7 +7,7 @@ from app.routers import auth, admin, annotator
 from app.seed import seed_database
 
 # Import all models so Base knows about them
-from app.models import user, image, category, option, annotator_category, annotation  # noqa
+from app.models import user, image, category, option, annotator_category, annotation, image_assignment, edit_request  # noqa
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -27,6 +27,19 @@ def _migrate():
             if "reviewed_at" not in existing:
                 conn.execute(text("ALTER TABLE annotations ADD COLUMN reviewed_at TIMESTAMPTZ"))
         print("[MIGRATE] Checked/added review columns to annotations table")
+    # Add improper columns to images table
+    if "images" in inspector.get_table_names():
+        existing_img = {col["name"] for col in inspector.get_columns("images")}
+        with engine.begin() as conn:
+            if "is_improper" not in existing_img:
+                conn.execute(text("ALTER TABLE images ADD COLUMN is_improper BOOLEAN DEFAULT FALSE NOT NULL"))
+            if "improper_reason" not in existing_img:
+                conn.execute(text("ALTER TABLE images ADD COLUMN improper_reason TEXT"))
+            if "marked_improper_by" not in existing_img:
+                conn.execute(text("ALTER TABLE images ADD COLUMN marked_improper_by INTEGER REFERENCES users(id)"))
+            if "marked_improper_at" not in existing_img:
+                conn.execute(text("ALTER TABLE images ADD COLUMN marked_improper_at TIMESTAMPTZ"))
+        print("[MIGRATE] Checked/added improper columns to images table")
 
 _migrate()
 

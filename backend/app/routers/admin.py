@@ -9,6 +9,7 @@ from app.models.category import Category
 from app.models.image import Image
 from app.models.annotation import Annotation
 from app.models.annotator_category import AnnotatorCategory
+from app.models.image_assignment import AnnotatorImageAssignment
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, AssignCategoriesRequest
 from app.schemas.category import CategoryResponse
 from app.models.annotation import AnnotationSelection
@@ -19,6 +20,11 @@ from app.schemas.annotation import (
     ReviewTableCell, ReviewTableRow, ReviewTableCategory, ReviewTableResponse,
 )
 from app.services.auth import hash_password
+from pydantic import BaseModel
+
+
+class AssignImagesRequest(BaseModel):
+    count: int  # Number of images to assign
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -33,6 +39,35 @@ def list_users(
     users = db.query(User).order_by(User.id).all()
     result = []
     for u in users:
+        assigned_cat_ids = [ac.category_id for ac in u.assigned_categories]
+        
+        # Get assigned image count
+        assigned_image_count = (
+            db.query(AnnotatorImageAssignment)
+            .filter(AnnotatorImageAssignment.user_id == u.id)
+            .count()
+        )
+        
+        # Get completed annotations count
+        completed_annotations = (
+            db.query(Annotation)
+            .filter(
+                Annotation.annotator_id == u.id,
+                Annotation.status == "completed",
+            )
+            .count()
+        )
+        
+        # Total needed = assigned_images * assigned_categories
+        total_annotations_needed = assigned_image_count * len(assigned_cat_ids)
+        
+        # Get improper images marked by this user
+        improper_marked_count = (
+            db.query(Image)
+            .filter(Image.marked_improper_by == u.id)
+            .count()
+        )
+        
         result.append(UserResponse(
             id=u.id,
             username=u.username,
@@ -40,7 +75,11 @@ def list_users(
             role=u.role,
             is_active=u.is_active,
             created_at=u.created_at,
-            assigned_category_ids=[ac.category_id for ac in u.assigned_categories],
+            assigned_category_ids=assigned_cat_ids,
+            assigned_image_count=assigned_image_count,
+            completed_annotations=completed_annotations,
+            total_annotations_needed=total_annotations_needed,
+            improper_marked_count=improper_marked_count,
         ))
     return result
 
@@ -130,6 +169,146 @@ def assign_categories(
 
     db.commit()
     return {"message": "Categories assigned", "category_ids": payload.category_ids}
+
+
+# ── Image Assignment ──────────────────────────────────────────────
+
+@router.get("/users/{user_id}/images")
+def get_user_image_assignments(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get all images assigned to a user."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    assignments = (
+        db.query(AnnotatorImageAssignment)
+        .filter(AnnotatorImageAssignment.user_id == user_id)
+        .options(joinedload(AnnotatorImageAssignment.image))
+        .order_by(AnnotatorImageAssignment.image_id)
+        .all()
+    )
+    
+    return {
+        "user_id": user_id,
+        "username": user.username,
+        "assigned_count": len(assignments),
+        "images": [
+            {
+                "id": a.image.id,
+                "filename": a.image.filename,
+                "url": a.image.url,
+                "assigned_at": a.assigned_at,
+            }
+            for a in assignments
+        ],
+    }
+
+
+@router.post("/users/{user_id}/images/assign")
+def assign_images_to_user(
+    user_id: int,
+    payload: AssignImagesRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """
+    Assign N unassigned images to a user.
+    Images are assigned in order (lowest ID first).
+    No duplicate assignments - each image can only be assigned to one user.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role != "annotator":
+        raise HTTPException(status_code=400, detail="Can only assign images to annotators")
+    
+    if payload.count <= 0:
+        raise HTTPException(status_code=400, detail="Count must be greater than 0")
+    
+    # Get IDs of already assigned images
+    assigned_image_ids = set(
+        row.image_id
+        for row in db.query(AnnotatorImageAssignment.image_id).all()
+    )
+    
+    # Get unassigned images (ordered by ID)
+    all_images = db.query(Image).order_by(Image.id).all()
+    unassigned_images = [img for img in all_images if img.id not in assigned_image_ids]
+    
+    if len(unassigned_images) == 0:
+        raise HTTPException(status_code=400, detail="No unassigned images available")
+    
+    # Take the requested count (or fewer if not enough available)
+    to_assign = unassigned_images[:payload.count]
+    
+    # Create assignments
+    for img in to_assign:
+        db.add(AnnotatorImageAssignment(user_id=user_id, image_id=img.id))
+    
+    db.commit()
+    
+    return {
+        "message": f"Assigned {len(to_assign)} images to {user.username}",
+        "assigned_count": len(to_assign),
+        "requested_count": payload.count,
+        "remaining_unassigned": len(unassigned_images) - len(to_assign),
+    }
+
+
+@router.delete("/users/{user_id}/images/unassign")
+def unassign_all_images_from_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Remove all image assignments from a user."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    count = db.query(AnnotatorImageAssignment).filter(
+        AnnotatorImageAssignment.user_id == user_id
+    ).delete()
+    db.commit()
+    
+    return {"message": f"Unassigned {count} images from {user.username}", "count": count}
+
+
+@router.get("/images/assignments")
+def get_all_image_assignments(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get assignment summary for all images."""
+    total_images = db.query(Image).count()
+    
+    assignments = (
+        db.query(AnnotatorImageAssignment)
+        .options(joinedload(AnnotatorImageAssignment.user))
+        .all()
+    )
+    
+    # Group by user
+    by_user = {}
+    for a in assignments:
+        if a.user_id not in by_user:
+            by_user[a.user_id] = {
+                "user_id": a.user_id,
+                "username": a.user.username,
+                "count": 0,
+            }
+        by_user[a.user_id]["count"] += 1
+    
+    return {
+        "total_images": total_images,
+        "assigned_count": len(assignments),
+        "unassigned_count": total_images - len(assignments),
+        "by_user": list(by_user.values()),
+    }
 
 
 # ── Categories ────────────────────────────────────────────────────
@@ -572,3 +751,202 @@ def update_and_approve_annotation(
     annotation.reviewed_at = datetime.now(timezone.utc)
     db.commit()
     return {"message": "Annotation updated and approved", "annotation_id": annotation_id}
+
+
+# ── Improper Images ───────────────────────────────────────────────
+
+@router.get("/images/improper")
+def list_improper_images(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """List all images marked as improper by annotators."""
+    query = (
+        db.query(Image)
+        .filter(Image.is_improper == True)
+        .order_by(Image.marked_improper_at.desc())
+    )
+    
+    total = query.count()
+    images = query.offset((page - 1) * page_size).limit(page_size).all()
+    
+    result = []
+    for img in images:
+        marker = None
+        if img.marked_improper_by:
+            marker = db.query(User).filter(User.id == img.marked_improper_by).first()
+        
+        result.append({
+            "id": img.id,
+            "filename": img.filename,
+            "url": img.url,
+            "is_improper": img.is_improper,
+            "improper_reason": img.improper_reason,
+            "marked_improper_by": marker.username if marker else None,
+            "marked_improper_by_id": img.marked_improper_by,
+            "marked_improper_at": img.marked_improper_at,
+        })
+    
+    return {
+        "images": result,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/images/improper/count")
+def get_improper_images_count(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get count of improper images."""
+    count = db.query(Image).filter(Image.is_improper == True).count()
+    return {"count": count}
+
+
+@router.put("/images/{image_id}/revoke-improper")
+def revoke_improper_status(
+    image_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Admin revokes improper status - marks image as proper again."""
+    image = db.query(Image).filter(Image.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    if not image.is_improper:
+        raise HTTPException(status_code=400, detail="Image is not marked as improper")
+    
+    image.is_improper = False
+    image.improper_reason = None
+    image.marked_improper_by = None
+    image.marked_improper_at = None
+    
+    db.commit()
+    
+    return {
+        "message": "Image marked as proper again",
+        "image_id": image_id,
+    }
+
+
+# ── Edit Requests ─────────────────────────────────────────────────
+
+from app.models.edit_request import EditRequest
+
+
+@router.get("/edit-requests")
+def list_edit_requests(
+    status_filter: Optional[str] = Query(None),  # pending, approved, rejected
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """List all edit requests."""
+    query = db.query(EditRequest).order_by(EditRequest.created_at.desc())
+    
+    if status_filter:
+        query = query.filter(EditRequest.status == status_filter)
+    
+    total = query.count()
+    requests = query.offset((page - 1) * page_size).limit(page_size).all()
+    
+    result = []
+    for r in requests:
+        user = db.query(User).filter(User.id == r.user_id).first()
+        image = db.query(Image).filter(Image.id == r.image_id).first()
+        reviewer = db.query(User).filter(User.id == r.reviewed_by).first() if r.reviewed_by else None
+        
+        result.append({
+            "id": r.id,
+            "user_id": r.user_id,
+            "username": user.username if user else None,
+            "image_id": r.image_id,
+            "image_filename": image.filename if image else None,
+            "image_url": image.url if image else None,
+            "reason": r.reason,
+            "status": r.status,
+            "created_at": r.created_at,
+            "reviewed_by": reviewer.username if reviewer else None,
+            "reviewed_at": r.reviewed_at,
+            "review_note": r.review_note,
+        })
+    
+    return {
+        "requests": result,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/edit-requests/count")
+def get_edit_requests_count(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get count of pending edit requests."""
+    pending = db.query(EditRequest).filter(EditRequest.status == "pending").count()
+    approved = db.query(EditRequest).filter(EditRequest.status == "approved").count()
+    rejected = db.query(EditRequest).filter(EditRequest.status == "rejected").count()
+    return {
+        "pending": pending,
+        "approved": approved,
+        "rejected": rejected,
+        "total": pending + approved + rejected,
+    }
+
+
+@router.put("/edit-requests/{request_id}/approve")
+def approve_edit_request(
+    request_id: int,
+    review_note: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Approve an edit request."""
+    edit_request = db.query(EditRequest).filter(EditRequest.id == request_id).first()
+    if not edit_request:
+        raise HTTPException(status_code=404, detail="Edit request not found")
+    
+    if edit_request.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    edit_request.status = "approved"
+    edit_request.reviewed_by = admin.id
+    edit_request.reviewed_at = datetime.now(timezone.utc)
+    edit_request.review_note = review_note
+    
+    db.commit()
+    
+    return {"message": "Edit request approved", "request_id": request_id}
+
+
+@router.put("/edit-requests/{request_id}/reject")
+def reject_edit_request(
+    request_id: int,
+    review_note: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Reject an edit request."""
+    edit_request = db.query(EditRequest).filter(EditRequest.id == request_id).first()
+    if not edit_request:
+        raise HTTPException(status_code=404, detail="Edit request not found")
+    
+    if edit_request.status != "pending":
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    edit_request.status = "rejected"
+    edit_request.reviewed_by = admin.id
+    edit_request.reviewed_at = datetime.now(timezone.utc)
+    edit_request.review_note = review_note
+    
+    db.commit()
+    
+    return {"message": "Edit request rejected", "request_id": request_id}
