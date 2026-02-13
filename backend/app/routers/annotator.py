@@ -280,6 +280,11 @@ def list_images_for_annotator(
         if filter_status == "completed" and overall_status != "completed":
             continue
         
+        # Check if any annotation needs rework
+        has_rework = any(
+            a.review_status == "rework_requested" for a in my_annotations
+        )
+        
         images_data.append({
             "id": img.id,
             "filename": img.filename,
@@ -290,6 +295,7 @@ def list_images_for_annotator(
             "total_categories": len(assigned_cat_ids),
             "is_improper": img.is_improper,
             "improper_reason": img.improper_reason,
+            "has_rework": has_rework,  # True if any annotation needs rework
         })
     
     # Paginate
@@ -428,11 +434,18 @@ def get_image_for_annotation(
     completed_annotations_count = len([a for a in my_annotations if a.status == "completed"])
     is_locked = completed_annotations_count > 0
     
+    # Check if any annotation is sent for rework - if so, allow editing without permission
+    has_rework_request = any(
+        a.review_status == "rework_requested" for a in my_annotations
+    )
+    
     pending_edit_request = None
     approved_edit_request = None
     can_edit = True
+    is_rework = has_rework_request
     
-    if is_locked:
+    if is_locked and not has_rework_request:
+        # Only check edit request if not sent for rework
         # Check for approved edit request
         approved_request = (
             db.query(EditRequest)
@@ -460,6 +473,10 @@ def get_image_for_annotation(
             )
             if pending_request:
                 pending_edit_request = pending_request.id
+    elif has_rework_request:
+        # Rework requested - always allow editing, mark as unlocked for UI
+        can_edit = True
+        is_locked = False
     
     return {
         "id": image.id,
@@ -476,6 +493,7 @@ def get_image_for_annotation(
         "can_edit": can_edit,
         "pending_edit_request": pending_edit_request,
         "approved_edit_request": approved_edit_request,
+        "is_rework": is_rework,  # True if sent back for rework by admin
     }
 
 
@@ -524,24 +542,36 @@ def save_image_annotations(
     )
     
     if completed_annotations > 0:
-        # Check for approved edit request
-        from app.models.edit_request import EditRequest
-        approved_request = (
-            db.query(EditRequest)
+        # Check if any annotation is sent for rework - if so, allow editing
+        has_rework_request = (
+            db.query(Annotation)
             .filter(
-                EditRequest.user_id == user.id,
-                EditRequest.image_id == image_id,
-                EditRequest.status == "approved",
+                Annotation.image_id == image_id,
+                Annotation.annotator_id == user.id,
+                Annotation.review_status == "rework_requested",
             )
-            .first()
-        )
-        if not approved_request:
-            raise HTTPException(
-                status_code=403,
-                detail="This image is locked. Request edit permission from admin."
+            .count()
+        ) > 0
+        
+        if not has_rework_request:
+            # Not a rework - check for approved edit request
+            from app.models.edit_request import EditRequest
+            approved_request = (
+                db.query(EditRequest)
+                .filter(
+                    EditRequest.user_id == user.id,
+                    EditRequest.image_id == image_id,
+                    EditRequest.status == "approved",
+                )
+                .first()
             )
-        # Consume the approved request after saving (mark it as used)
-        approved_request.status = "used"
+            if not approved_request:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This image is locked. Request edit permission from admin."
+                )
+            # Consume the approved request after saving (mark it as used)
+            approved_request.status = "used"
     
     # Get assigned categories
     assigned_cat_ids = set(assigned_cat_ids_list)
@@ -589,7 +619,7 @@ def save_image_annotations(
     if missing_categories:
         raise HTTPException(
             status_code=400,
-            detail=f"Please select at least one option for: {', '.join(missing_categories)}"
+            detail=f"Please select an option for each category. Missing: {', '.join(missing_categories)}"
         )
     
     saved = []
@@ -1025,24 +1055,36 @@ def mark_image_as_improper(
     )
     
     if completed_annotations > 0:
-        # Check for approved edit request
-        from app.models.edit_request import EditRequest
-        approved_request = (
-            db.query(EditRequest)
+        # Check if any annotation is sent for rework - if so, allow editing
+        has_rework_request = (
+            db.query(Annotation)
             .filter(
-                EditRequest.user_id == user.id,
-                EditRequest.image_id == image_id,
-                EditRequest.status == "approved",
+                Annotation.image_id == image_id,
+                Annotation.annotator_id == user.id,
+                Annotation.review_status == "rework_requested",
             )
-            .first()
-        )
-        if not approved_request:
-            raise HTTPException(
-                status_code=403,
-                detail="This image is locked. Request edit permission from admin."
+            .count()
+        ) > 0
+        
+        if not has_rework_request:
+            # Not a rework - check for approved edit request
+            from app.models.edit_request import EditRequest
+            approved_request = (
+                db.query(EditRequest)
+                .filter(
+                    EditRequest.user_id == user.id,
+                    EditRequest.image_id == image_id,
+                    EditRequest.status == "approved",
+                )
+                .first()
             )
-        # Consume the approved request after saving (mark it as used)
-        approved_request.status = "used"
+            if not approved_request:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This image is locked. Request edit permission from admin."
+                )
+            # Consume the approved request after saving (mark it as used)
+            approved_request.status = "used"
     
     # Verify this image is assigned to the user (already checked above)
     # assigned_image_ids = _get_assigned_image_ids(db, user.id)
@@ -1164,6 +1206,27 @@ def get_edit_status(
             "is_locked": False,
             "pending_request": False,
             "approved_request_id": None,
+            "is_rework": False,
+        }
+    
+    # Check if any annotation is sent for rework - if so, allow editing
+    has_rework_request = (
+        db.query(Annotation)
+        .filter(
+            Annotation.image_id == image_id,
+            Annotation.annotator_id == user.id,
+            Annotation.review_status == "rework_requested",
+        )
+        .count()
+    ) > 0
+    
+    if has_rework_request:
+        return {
+            "can_edit": True,
+            "is_locked": False,
+            "pending_request": False,
+            "approved_request_id": None,
+            "is_rework": True,
         }
     
     # Check for approved edit request
@@ -1184,6 +1247,7 @@ def get_edit_status(
             "is_locked": False,
             "pending_request": False,
             "approved_request_id": approved_request.id,
+            "is_rework": False,
         }
     
     # Check for pending request
@@ -1203,6 +1267,7 @@ def get_edit_status(
         "pending_request": pending_request is not None,
         "pending_request_id": pending_request.id if pending_request else None,
         "approved_request_id": None,
+        "is_rework": False,
     }
 
 

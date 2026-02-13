@@ -11,14 +11,6 @@ const getImageUrl = (imageId) => {
   return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
 };
 
-function formatTimeSpent(seconds) {
-  if (!seconds || seconds <= 0) return null;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (mins > 0) return `${mins}m ${secs}s`;
-  return `${secs}s`;
-}
-
 /* ─── Reusable UI Helpers ──────────────────────────────────── */
 
 function Avatar({ name, size = 'sm' }) {
@@ -999,7 +991,7 @@ function CellEditPopover({ cell, onSave, onApprove, onClose }) {
 
 // ─── Image Detail Modal (split-view) ─────────────────────────
 
-function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits, onClose, onNavigate }) {
+function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits, onRework, onClose, onNavigate }) {
   // Local edit state: map of category_id -> { selections: [...], isDuplicate }
   const [edits, setEdits] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1055,7 +1047,16 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
   const pendingAnnotations = categories
     .filter((cat) => {
       const cell = row.annotations[String(cat.id)];
-      return cell && !cell.review_status;
+      // Include null/undefined, rework_requested, and rework_completed as "pending" (approvable)
+      return cell && cell.review_status !== 'approved';
+    })
+    .map((cat) => row.annotations[String(cat.id)]);
+
+  // Get all completed annotations (including approved) for rework option
+  const allAnnotations = categories
+    .filter((cat) => {
+      const cell = row.annotations[String(cat.id)];
+      return cell && cell.annotation_id;
     })
     .map((cat) => row.annotations[String(cat.id)]);
 
@@ -1135,16 +1136,6 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
           <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-gray-900">Annotations</h3>
-              {(() => {
-                const maxTime = Math.max(0, ...categories.map((cat) => row.annotations[String(cat.id)]?.time_spent_seconds || 0));
-                const timeStr = formatTimeSpent(maxTime);
-                return timeStr ? (
-                  <span className={`flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${maxTime >= 120 ? 'bg-red-100 text-red-700' : maxTime >= 90 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    {timeStr}
-                  </span>
-                ) : null;
-              })()}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded">Esc to close</span>
@@ -1174,22 +1165,14 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
                     <h4 className="text-xs font-semibold text-gray-800">{cat.name}</h4>
                     {cell.review_status === 'approved' ? (
                       <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded-full">Approved</span>
+                    ) : cell.review_status === 'rework_requested' ? (
+                      <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-medium rounded-full">🔄 Awaiting Rework</span>
+                    ) : cell.review_status === 'rework_completed' ? (
+                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-medium rounded-full">✅ Rework Done</span>
                     ) : (
                       <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded-full">Pending</span>
                     )}
-                    <span className="text-[10px] text-gray-400 ml-auto flex items-center gap-1.5">
-                      {formatTimeSpent(cell.time_spent_seconds) && (
-                        <span className="flex items-center gap-0.5 text-gray-400" title="Initial annotation time">
-                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          {formatTimeSpent(cell.time_spent_seconds)}
-                        </span>
-                      )}
-                      {cell.rework_time_seconds > 0 && (
-                        <span className="flex items-center gap-0.5 text-amber-500" title="Rework time">
-                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                          +{formatTimeSpent(cell.rework_time_seconds)}
-                        </span>
-                      )}
+                    <span className="text-[10px] text-gray-400 ml-auto">
                       {cell.annotator_username}
                     </span>
                   </div>
@@ -1228,15 +1211,35 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
                 {saving ? 'Saving...' : 'Save Changes & Approve All'}
               </button>
             ) : pendingAnnotations.length > 0 ? (
-              <button
-                onClick={handleApproveAll}
-                disabled={saving}
-                className="flex-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 cursor-pointer"
-              >
-                {saving ? 'Approving...' : `Approve All Pending (${pendingAnnotations.length})`}
-              </button>
+              <>
+                <button
+                  onClick={handleApproveAll}
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 cursor-pointer"
+                >
+                  {saving ? 'Approving...' : `Approve All (${pendingAnnotations.length})`}
+                </button>
+                <button
+                  onClick={() => onRework(pendingAnnotations[0]?.annotation_id)}
+                  disabled={saving}
+                  className="px-4 py-2 border border-amber-300 text-amber-600 text-sm font-medium rounded-lg hover:bg-amber-50 disabled:opacity-50 cursor-pointer"
+                >
+                  Send for Rework
+                </button>
+              </>
             ) : (
-              <span className="flex-1 text-center text-sm text-green-600 font-medium">All categories approved</span>
+              <>
+                <span className="flex-1 text-center text-sm text-green-600 font-medium">✓ All categories approved</span>
+                {allAnnotations.length > 0 && (
+                  <button
+                    onClick={() => onRework(allAnnotations[0]?.annotation_id)}
+                    disabled={saving}
+                    className="px-4 py-2 border border-amber-300 text-amber-600 text-sm font-medium rounded-lg hover:bg-amber-50 disabled:opacity-50 cursor-pointer"
+                  >
+                    Send for Rework
+                  </button>
+                )}
+              </>
             )}
             <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded">A = approve</span>
           </div>
@@ -1370,6 +1373,20 @@ function ReviewTab() {
   const refreshData = useCallback(() => {
     if (viewMode === 'cards') loadCards(); else loadTable();
   }, [viewMode, loadCards, loadTable]);
+
+  // ── Sync modalRow with latest tableData after refresh ──
+  useEffect(() => {
+    if (modalRow && tableData?.images) {
+      const updatedRow = tableData.images.find((img) => img.image_id === modalRow.image_id);
+      if (updatedRow) {
+        setModalRow(updatedRow);
+      } else {
+        // If item is no longer in filtered results (e.g., approved while viewing pending),
+        // close the modal
+        setModalRow(null);
+      }
+    }
+  }, [tableData]);
 
   // ── Shared actions ──
   const handleApprove = async (annotationId) => {
@@ -1779,24 +1796,16 @@ function ReviewTab() {
                                     className={`cursor-pointer rounded-lg p-1.5 transition border ${
                                       cell.review_status === 'approved'
                                         ? 'border-green-200 bg-green-50/50 hover:border-green-300'
-                                        : 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
+                                        : cell.review_status === 'rework_requested'
+                                          ? 'border-orange-300 bg-orange-50/50 hover:border-orange-400'
+                                          : cell.review_status === 'rework_completed'
+                                            ? 'border-purple-300 bg-purple-50/50 hover:border-purple-400'
+                                            : 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
                                     }`}
                                   >
                                     <div className="flex items-center gap-1 mb-1">
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cell.review_status === 'approved' ? 'bg-green-500' : 'bg-amber-400'}`} />
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cell.review_status === 'approved' ? 'bg-green-500' : cell.review_status === 'rework_requested' ? 'bg-orange-500' : cell.review_status === 'rework_completed' ? 'bg-purple-500' : 'bg-amber-400'}`} />
                                       <span className="text-[10px] text-gray-500 truncate">{cell.annotator_username}</span>
-                                      {formatTimeSpent(cell.time_spent_seconds) && (
-                                        <span className="text-[9px] text-gray-400 flex items-center gap-0.5" title="Initial annotation time">
-                                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                          {formatTimeSpent(cell.time_spent_seconds)}
-                                        </span>
-                                      )}
-                                      {cell.rework_time_seconds > 0 && (
-                                        <span className="text-[9px] text-amber-500 flex items-center gap-0.5" title="Rework time">
-                                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                                          +{formatTimeSpent(cell.rework_time_seconds)}
-                                        </span>
-                                      )}
                                       {cell.is_duplicate === true && (
                                         <span className="ml-auto px-1 py-0.5 bg-red-100 text-red-600 text-[9px] font-bold rounded">D</span>
                                       )}
@@ -1871,6 +1880,10 @@ function ReviewTab() {
                           <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">{a.category_name}</span>
                           {a.review_status === 'approved' ? (
                             <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded-full">Approved</span>
+                          ) : a.review_status === 'rework_requested' ? (
+                            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded-full">🔄 Awaiting Rework</span>
+                          ) : a.review_status === 'rework_completed' ? (
+                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">✅ Rework Done</span>
                           ) : (
                             <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">Pending</span>
                           )}
@@ -1880,18 +1893,6 @@ function ReviewTab() {
                         </div>
                         <p className="text-xs text-gray-500 mb-2 flex items-center gap-3">
                           <span>Annotated by <span className="font-medium">{a.annotator_username}</span></span>
-                          {formatTimeSpent(a.time_spent_seconds) && (
-                            <span className="flex items-center gap-1 text-gray-400" title="Initial annotation time">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                              {formatTimeSpent(a.time_spent_seconds)}
-                            </span>
-                          )}
-                          {a.rework_time_seconds > 0 && (
-                            <span className="flex items-center gap-1 text-amber-500" title="Rework time">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                              +{formatTimeSpent(a.rework_time_seconds)}
-                            </span>
-                          )}
                           {a.is_rework && (
                             <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded-full">Rework</span>
                           )}
@@ -2046,8 +2047,22 @@ function ReviewTab() {
           row={modalRow}
           categories={tableData.categories}
           tableImages={tableData.images}
-          onApprove={async (annId) => { await handleApprove(annId); refreshData(); }}
+          onApprove={async (annId) => {
+            await handleApprove(annId);
+            // Optimistically update modalRow to show approved status immediately
+            if (modalRow) {
+              const updatedAnnotations = { ...modalRow.annotations };
+              for (const catId of Object.keys(updatedAnnotations)) {
+                if (updatedAnnotations[catId]?.annotation_id === annId) {
+                  updatedAnnotations[catId] = { ...updatedAnnotations[catId], review_status: 'approved' };
+                }
+              }
+              setModalRow({ ...modalRow, annotations: updatedAnnotations });
+            }
+            refreshData();
+          }}
           onSaveEdits={async (annId, sels, dup) => { await handleSaveEdits(annId, sels, dup); refreshData(); }}
+          onRework={(annId) => { setModalRow(null); openReworkModal(annId); }}
           onClose={() => setModalRow(null)}
           onNavigate={(newRow) => setModalRow(newRow)}
         />
@@ -2067,8 +2082,8 @@ function ReviewTab() {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Send for Rework</h3>
-                <p className="text-sm text-gray-500">The annotator will be notified to redo this annotation</p>
+                <h3 className="text-lg font-bold text-gray-900">Send Image for Rework</h3>
+                <p className="text-sm text-gray-500">The annotator will be notified to redo all categories for this image</p>
               </div>
             </div>
 
@@ -2100,7 +2115,7 @@ function ReviewTab() {
                 disabled={sendingRework || !reworkReason.trim()}
                 className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-xl transition cursor-pointer disabled:opacity-50"
               >
-                {sendingRework ? 'Sending...' : 'Send for Rework'}
+                {sendingRework ? 'Sending...' : 'Send Image for Rework'}
               </button>
             </div>
           </div>
@@ -2522,17 +2537,17 @@ function AnnotationLogTab() {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-gray-700">Status:</label>
+          <label className="text-sm font-medium text-gray-700">Event Type:</label>
           <select
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="all">All</option>
-            <option value="annotated">Annotated</option>
-            <option value="rework">Rework</option>
-            <option value="approved">Approved</option>
-            <option value="pending">Pending</option>
+            <option value="all">All Events</option>
+            <option value="initial">Annotations</option>
+            <option value="rework">Reworks</option>
+            <option value="approved">Approvals</option>
+            <option value="pending">Pending Review</option>
           </select>
         </div>
         <div className="flex items-center gap-2">
@@ -2581,15 +2596,15 @@ function AnnotationLogTab() {
                     <th className="text-left px-4 py-3 font-semibold text-gray-700">Image</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-700">Annotator</th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-700">Categories</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Labelling Status</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Time Taken</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Reviewer</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Approval Status</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Event</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Time</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Action By</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {data.annotations.map((a) => (
-                    <tr key={`${a.image_id}-${a.annotator_id}`} className="hover:bg-gray-50 transition">
+                  {data.annotations.map((a, idx) => (
+                    <tr key={`${a.image_id}-${a.annotator_id}-${a.event_type}-${idx}`} className="hover:bg-gray-50 transition">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <img
@@ -2625,33 +2640,50 @@ function AnnotationLogTab() {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          a.labelling_status === 'Rework'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-blue-100 text-blue-700'
+                          a.event_type === 'Annotation'
+                            ? 'bg-blue-100 text-blue-700'
+                            : a.event_type === 'Rework'
+                              ? 'bg-orange-100 text-orange-700'
+                              : a.event_type === 'Review'
+                                ? 'bg-amber-100 text-amber-700'
+                                : a.event_type === 'Approval'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-gray-100 text-gray-600'
                         }`}>
-                          {a.labelling_status}
+                          {a.event_type === 'Annotation' && '📝 '}
+                          {a.event_type === 'Rework' && '🔄 '}
+                          {a.event_type === 'Review' && '👁️ '}
+                          {a.event_type === 'Approval' && '✅ '}
+                          {a.event_type === 'Pending' && '⏳ '}
+                          {a.event_type}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="font-medium text-gray-900">{formatTime(a.time_taken_seconds)}</span>
-                          {a.rework_time_seconds > 0 && (
-                            <span className="text-[10px] text-gray-400">
-                              (+{formatTime(a.rework_time_seconds)} rework)
-                            </span>
-                          )}
-                        </div>
+                        {a.time_taken_seconds > 0 ? (
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className="font-medium text-gray-900">{formatTime(a.time_taken_seconds)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
-                        {a.reviewer_name ? (
+                        {a.actor_name && a.actor_name !== '-' ? (
                           <div className="flex items-center gap-2">
-                            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white text-[9px] font-bold">
-                              {a.reviewer_name[0].toUpperCase()}
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold ${
+                              a.actor_role === 'reviewer'
+                                ? 'bg-gradient-to-br from-emerald-500 to-teal-500'
+                                : 'bg-gradient-to-br from-indigo-500 to-purple-500'
+                            }`}>
+                              {a.actor_name[0].toUpperCase()}
                             </div>
-                            <span className="text-gray-700 text-xs">{a.reviewer_name}</span>
+                            <div>
+                              <span className="text-gray-700 text-xs">{a.actor_name}</span>
+                              <span className="text-[10px] text-gray-400 ml-1">({a.actor_role})</span>
+                            </div>
                           </div>
                         ) : (
                           <span className="text-gray-400 text-xs">-</span>
@@ -2659,15 +2691,19 @@ function AnnotationLogTab() {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          a.approval_status === 'Approved'
+                          a.status === 'Approved'
                             ? 'bg-emerald-100 text-emerald-700'
-                            : a.approval_status === 'Rework Requested'
-                              ? 'bg-red-100 text-red-700'
-                              : a.approval_status === 'Rework Completed'
-                                ? 'bg-purple-100 text-purple-700'
-                                : 'bg-gray-100 text-gray-600'
+                            : a.status === 'Submitted'
+                              ? 'bg-blue-100 text-blue-700'
+                              : a.status === 'Sent for Rework'
+                                ? 'bg-amber-100 text-amber-700'
+                                : a.status === 'Sent for Rework Again'
+                                  ? 'bg-red-100 text-red-700'
+                                  : a.status === 'Pending Review'
+                                    ? 'bg-gray-100 text-gray-600'
+                                    : 'bg-gray-100 text-gray-600'
                         }`}>
-                          {a.approval_status}
+                          {a.status}
                         </span>
                       </td>
                     </tr>

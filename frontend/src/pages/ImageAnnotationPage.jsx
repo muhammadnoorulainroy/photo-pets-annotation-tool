@@ -11,21 +11,22 @@ const getImageUrl = (imageId) => {
 
 function CategoryDropdown({ category, annotation, completedByOther, onChange, disabled }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedOptions, setSelectedOptions] = useState(
-    annotation?.selected_option_ids || []
+  // Single selection - store only one option ID (or null)
+  const [selectedOption, setSelectedOption] = useState(
+    annotation?.selected_option_ids?.[0] || null
   );
 
   useEffect(() => {
-    setSelectedOptions(annotation?.selected_option_ids || []);
+    setSelectedOption(annotation?.selected_option_ids?.[0] || null);
   }, [annotation]);
 
-  const toggleOption = (optionId) => {
+  const selectOption = (optionId) => {
     if (disabled) return;
-    const newSelected = selectedOptions.includes(optionId)
-      ? selectedOptions.filter((id) => id !== optionId)
-      : [...selectedOptions, optionId];
-    setSelectedOptions(newSelected);
-    onChange(category.id, { selected_option_ids: newSelected });
+    // Single selection - clicking the same option deselects it, otherwise select the new one
+    const newSelected = selectedOption === optionId ? null : optionId;
+    setSelectedOption(newSelected);
+    // Still pass as array for API compatibility
+    onChange(category.id, { selected_option_ids: newSelected ? [newSelected] : [] });
   };
 
   const handleToggle = (e) => {
@@ -35,15 +36,8 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
   };
 
   const isCompleted = annotation?.status === 'completed' || completedByOther;
-  const selectedCount = selectedOptions.length;
-  const selectedLabels = category.options
-    .filter((o) => selectedOptions.includes(o.id))
-    .map((o) => o.label);
-  const summaryText = selectedLabels.length > 0
-    ? selectedLabels.length <= 2
-      ? selectedLabels.join(', ')
-      : `${selectedLabels[0]} +${selectedLabels.length - 1} more`
-    : null;
+  const hasSelection = selectedOption !== null;
+  const selectedLabel = category.options.find((o) => o.id === selectedOption)?.label || null;
 
   return (
     <div className={`border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm transition-all hover:shadow-md ${disabled ? 'opacity-50' : ''}`}>
@@ -56,14 +50,14 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
         <div className="flex items-center gap-3">
           <div
             className={`w-3 h-3 rounded-full shrink-0 ${
-              isCompleted ? 'bg-green-500' : selectedCount > 0 ? 'bg-amber-400' : 'bg-gray-300'
+              isCompleted ? 'bg-green-500' : hasSelection ? 'bg-amber-400' : 'bg-gray-300'
             }`}
           />
           <div className="text-left">
             <h3 className="font-medium text-gray-900 text-sm">{category.name}</h3>
-            {summaryText ? (
+            {selectedLabel ? (
               <p className="text-xs text-gray-500 mt-0.5 truncate max-w-xs">
-                {summaryText}
+                {selectedLabel}
               </p>
             ) : completedByOther ? (
               <p className="text-xs text-green-600 mt-0.5">Completed by another annotator</p>
@@ -73,8 +67,8 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {selectedCount > 0 && (
-            <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full">{selectedCount}</span>
+          {hasSelection && (
+            <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full">✓</span>
           )}
           <svg
             className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
@@ -97,14 +91,14 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
           
           <div className="space-y-2">
             {category.options.map((opt) => {
-              const isSelected = selectedOptions.includes(opt.id);
+              const isSelected = selectedOption === opt.id;
               return (
                 <div
                   key={opt.id}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    toggleOption(opt.id);
+                    selectOption(opt.id);
                   }}
                   className={`
                     flex items-center gap-3 px-3 py-2.5 rounded-lg border-2 cursor-pointer transition-all select-none
@@ -115,16 +109,15 @@ function CategoryDropdown({ category, annotation, completedByOther, onChange, di
                     }
                   `}
                 >
+                  {/* Radio button style (circle) for single selection */}
                   <div
                     className={`
-                      w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-all
-                      ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300'}
+                      w-5 h-5 rounded-full flex items-center justify-center border-2 shrink-0 transition-all
+                      ${isSelected ? 'border-indigo-500' : 'border-gray-300'}
                     `}
                   >
                     {isSelected && (
-                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
+                      <div className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
                     )}
                   </div>
                   <span className="text-sm font-medium flex-1">{opt.label}</span>
@@ -360,8 +353,8 @@ export default function ImageAnnotationPage() {
       });
       setPendingChanges(initial);
       
-      // Detect if this is a rework (any category has review_status = 'rework_requested' or 'rework_completed')
-      const hasRework = res.data.categories.some(cat => 
+      // Detect if this is a rework - check both top-level flag and category annotations
+      const hasRework = res.data.is_rework || res.data.categories.some(cat => 
         cat.annotation?.review_status === 'rework_requested' || cat.annotation?.is_rework
       );
       setIsReworkMode(hasRework);
@@ -412,7 +405,7 @@ export default function ImageAnnotationPage() {
     // Validate all categories have selections
     const validation = validateAllCategoriesSelected();
     if (!validation.valid) {
-      setError(`Please select at least one option for: ${validation.missing.join(', ')}`);
+      setError(`Please select an option for: ${validation.missing.join(', ')}`);
       return false;
     }
     
@@ -570,6 +563,7 @@ export default function ImageAnnotationPage() {
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-gray-900">{data?.filename}</h1>
                 {isImproper && <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-semibold">Improper</span>}
+                {isReworkMode && !isImproper && <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-semibold">Rework</span>}
                 {isLocked && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">Locked</span>}
                 {hasPendingRequest && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">Request Pending</span>}
               </div>
@@ -607,7 +601,7 @@ export default function ImageAnnotationPage() {
 
       <main className="flex-1 w-full min-h-0 overflow-hidden">
         <div className="h-full grid grid-cols-1 lg:grid-cols-[1fr_420px]">
-          <div className="bg-gray-900 relative flex items-center justify-center p-4">
+          <div className="bg-gray-900 relative flex items-center justify-center p-4 h-full">
             {isImproper && (
               <div className="absolute inset-0 bg-red-900/20 z-10 flex items-center justify-center">
                 <div className="bg-red-50 rounded-xl p-6 max-w-md mx-4 text-center">
@@ -619,18 +613,24 @@ export default function ImageAnnotationPage() {
               </div>
             )}
             
-            
+            {/* Fixed position navigation buttons */}
             {data?.prev_image_id && (
-              <button onClick={() => handleNavigate(data.prev_image_id)} className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/25 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition cursor-pointer z-20 shadow-lg">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              <button 
+                onClick={() => handleNavigate(data.prev_image_id)} 
+                className="fixed left-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-black/40 hover:bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition cursor-pointer z-30 shadow-xl border border-white/20"
+              >
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
               </button>
             )}
             
-            <img src={getImageUrl(data?.image_id)} alt={data?.filename} className={`max-w-full max-h-full object-contain rounded-lg ${isImproper ? 'opacity-50' : ''}`} />
+            <img src={getImageUrl(data?.id)} alt={data?.filename} className={`max-w-full max-h-full object-contain rounded-lg ${isImproper ? 'opacity-50' : ''}`} />
             
             {data?.next_image_id && (
-              <button onClick={() => handleNavigate(data.next_image_id)} className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/25 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition cursor-pointer z-20 shadow-lg">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              <button 
+                onClick={() => handleNavigate(data.next_image_id)} 
+                className="fixed top-1/2 -translate-y-1/2 w-14 h-14 bg-black/40 hover:bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition cursor-pointer z-30 shadow-xl border border-white/20 right-4 lg:right-[440px]"
+              >
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
               </button>
             )}
           </div>
@@ -663,6 +663,18 @@ export default function ImageAnnotationPage() {
               <div className="mx-4 mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
                 <p className="text-sm text-red-700 font-medium">Image marked as improper</p>
                 <p className="text-xs text-red-600 mt-1">Annotations are disabled.</p>
+              </div>
+            )}
+
+            {isReworkMode && !isImproper && (
+              <div className="mx-4 mt-3 bg-orange-50 border border-orange-300 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🔄</span>
+                  <div>
+                    <p className="text-sm text-orange-700 font-medium">Rework Requested</p>
+                    <p className="text-xs text-orange-600 mt-0.5">Please review and update your annotations as needed.</p>
+                  </div>
+                </div>
               </div>
             )}
 

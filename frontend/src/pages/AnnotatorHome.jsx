@@ -387,12 +387,13 @@ export default function AnnotatorHome() {
                   const isComplete = img.overall_status === 'completed';
                   const isPartial = img.overall_status === 'partial';
                   const isImproper = img.is_improper;
+                  const hasRework = img.has_rework;
                   
                   return (
                     <button
                       key={img.id}
                       onClick={() => navigate(`/annotator/image/${img.id}`)}
-                      className="group bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm card-glow cursor-pointer text-left animate-slide-up"
+                      className={`group bg-white rounded-xl border overflow-hidden shadow-sm card-glow cursor-pointer text-left animate-slide-up ${hasRework ? 'border-orange-400 ring-2 ring-orange-200' : 'border-gray-200'}`}
                     >
                       <div className="relative aspect-square">
                         <img
@@ -401,14 +402,19 @@ export default function AnnotatorHome() {
                           className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                           loading="lazy"
                         />
-                        {/* Status badge */}
-                        {isImproper && (
-                          <div className="absolute top-2 left-2">
+                        {/* Status badges - left side */}
+                        <div className="absolute top-2 left-2 flex flex-col gap-1">
+                          {isImproper && (
                             <span className="px-2 py-1 bg-red-500 text-white text-xs font-medium rounded-full shadow-sm">
                               Improper
                             </span>
-                          </div>
-                        )}
+                          )}
+                          {hasRework && !isImproper && (
+                            <span className="px-2 py-1 bg-orange-500 text-white text-xs font-medium rounded-full shadow-sm animate-pulse">
+                              🔄 Rework
+                            </span>
+                          )}
+                        </div>
                         <div className="absolute top-2 right-2">
                           {isComplete ? (
                             <span className="px-2 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-xs font-medium rounded-full shadow-sm">
