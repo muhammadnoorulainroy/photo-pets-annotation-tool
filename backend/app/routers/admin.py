@@ -14,6 +14,8 @@ from app.schemas.user import UserCreate, UserUpdate, UserResponse, AssignCategor
 from app.schemas.category import CategoryResponse
 from app.models.annotation import AnnotationSelection
 from app.models.option import Option
+from app.models.settings import SystemSettings
+from app.models.notification import Notification
 from app.schemas.annotation import (
     ProgressResponse, ImageCompletionResponse,
     ReviewApproveRequest, ReviewUpdateRequest, ReviewAnnotationDetail,
@@ -558,6 +560,8 @@ def list_annotations_for_review(
             selected_options=selected_options,
             all_options=all_options,
             time_spent_seconds=a.time_spent_seconds,
+            rework_time_seconds=a.rework_time_seconds or 0,
+            is_rework=a.is_rework or False,
             created_at=a.created_at,
             updated_at=a.updated_at,
         ))
@@ -656,6 +660,8 @@ def review_table(
             is_duplicate=a.is_duplicate,
             review_status=a.review_status,
             time_spent_seconds=a.time_spent_seconds,
+            rework_time_seconds=a.rework_time_seconds or 0,
+            is_rework=a.is_rework or False,
         )
 
     # Build rows in the order of page_image_ids
@@ -952,3 +958,320 @@ def reject_edit_request(
     db.commit()
     
     return {"message": "Edit request rejected", "request_id": request_id}
+
+
+# ── Settings Management ──────────────────────────────────────────
+
+class SettingsResponse(BaseModel):
+    max_annotation_time_seconds: int
+    max_rework_time_seconds: int
+
+
+class SettingsUpdateRequest(BaseModel):
+    max_annotation_time_seconds: Optional[int] = None
+    max_rework_time_seconds: Optional[int] = None
+
+
+def _get_setting(db: Session, key: str, default: str) -> str:
+    """Get a setting value or return default if not found."""
+    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+    return setting.value if setting else default
+
+
+def _set_setting(db: Session, key: str, value: str):
+    """Set a setting value, creating if not exists."""
+    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+    if setting:
+        setting.value = value
+    else:
+        setting = SystemSettings(key=key, value=value)
+        db.add(setting)
+    db.commit()
+
+
+@router.get("/settings", response_model=SettingsResponse)
+def get_settings(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get system settings for annotation time limits."""
+    return SettingsResponse(
+        max_annotation_time_seconds=int(_get_setting(db, "max_annotation_time_seconds", "120")),
+        max_rework_time_seconds=int(_get_setting(db, "max_rework_time_seconds", "120")),
+    )
+
+
+@router.put("/settings")
+def update_settings(
+    payload: SettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Update system settings for annotation time limits."""
+    if payload.max_annotation_time_seconds is not None:
+        if payload.max_annotation_time_seconds < 10:
+            raise HTTPException(status_code=400, detail="Max annotation time must be at least 10 seconds")
+        _set_setting(db, "max_annotation_time_seconds", str(payload.max_annotation_time_seconds))
+    
+    if payload.max_rework_time_seconds is not None:
+        if payload.max_rework_time_seconds < 10:
+            raise HTTPException(status_code=400, detail="Max rework time must be at least 10 seconds")
+        _set_setting(db, "max_rework_time_seconds", str(payload.max_rework_time_seconds))
+    
+    return {
+        "message": "Settings updated",
+        "max_annotation_time_seconds": int(_get_setting(db, "max_annotation_time_seconds", "120")),
+        "max_rework_time_seconds": int(_get_setting(db, "max_rework_time_seconds", "120")),
+    }
+
+
+# ── Annotation Log (Time Tracking Table) ─────────────────────────
+
+@router.get("/annotation-log")
+def get_annotation_log(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    annotator_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None),  # all, annotated, rework, approved, pending
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """
+    Get a comprehensive log of annotations grouped by image+annotator.
+    Each row represents one image annotated by one annotator (with all their assigned categories).
+    Returns: image_name, annotator_name, categories, labelling_status, time_taken, reviewer_name, approval_status
+    """
+    from sqlalchemy import func, distinct
+    
+    # First get distinct (image_id, annotator_id) pairs with completed annotations
+    base_query = (
+        db.query(
+            Annotation.image_id,
+            Annotation.annotator_id,
+            func.max(Annotation.updated_at).label('last_updated')
+        )
+        .filter(Annotation.status == "completed")
+        .group_by(Annotation.image_id, Annotation.annotator_id)
+    )
+    
+    if annotator_id:
+        base_query = base_query.filter(Annotation.annotator_id == annotator_id)
+    
+    # Get total count of unique image+annotator pairs
+    total_pairs = base_query.count()
+    
+    # Get paginated pairs ordered by last updated
+    pairs = (
+        base_query
+        .order_by(func.max(Annotation.updated_at).desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    
+    result = []
+    for img_id, ann_id, _ in pairs:
+        # Get all annotations for this image+annotator pair
+        annotations = (
+            db.query(Annotation)
+            .filter(
+                Annotation.image_id == img_id,
+                Annotation.annotator_id == ann_id,
+                Annotation.status == "completed",
+            )
+            .options(
+                joinedload(Annotation.image),
+                joinedload(Annotation.annotator),
+                joinedload(Annotation.category),
+                joinedload(Annotation.reviewer),
+            )
+            .all()
+        )
+        
+        if not annotations:
+            continue
+        
+        # Aggregate data from all categories for this image+annotator
+        first_ann = annotations[0]
+        categories = [a.category.name for a in annotations]
+        
+        # Time taken is stored per image (same across categories), take max
+        time_taken = max(a.time_spent_seconds or 0 for a in annotations)
+        rework_time = max(a.rework_time_seconds or 0 for a in annotations)
+        
+        # Determine labelling status (if any is rework, show as rework)
+        has_rework = any(a.is_rework for a in annotations)
+        labelling_status = "Rework" if has_rework else "Annotated"
+        
+        # Apply status filter
+        if status_filter == "rework" and not has_rework:
+            continue
+        elif status_filter == "annotated" and has_rework:
+            continue
+        
+        # Determine approval status (all must be approved to show as Approved)
+        all_approved = all(a.review_status == "approved" for a in annotations)
+        any_rework_requested = any(a.review_status == "rework_requested" for a in annotations)
+        any_rework_completed = any(a.review_status == "rework_completed" for a in annotations)
+        
+        if all_approved:
+            approval_status = "Approved"
+        elif any_rework_requested:
+            approval_status = "Rework Requested"
+        elif any_rework_completed:
+            approval_status = "Rework Completed"
+        else:
+            approval_status = "Pending"
+        
+        # Apply approval filter
+        if status_filter == "approved" and not all_approved:
+            continue
+        elif status_filter == "pending" and approval_status != "Pending":
+            continue
+        
+        # Get reviewer (take first non-null reviewer)
+        reviewer = next((a.reviewer for a in annotations if a.reviewer), None)
+        reviewed_at = next((a.reviewed_at for a in annotations if a.reviewed_at), None)
+        
+        result.append({
+            "image_id": img_id,
+            "image_name": first_ann.image.filename,
+            "image_url": first_ann.image.url,
+            "annotator_id": ann_id,
+            "annotator_name": first_ann.annotator.username,
+            "categories": categories,
+            "category_count": len(categories),
+            "labelling_status": labelling_status,
+            "time_taken_seconds": time_taken,
+            "rework_time_seconds": rework_time,
+            "total_time_seconds": time_taken + rework_time,
+            "reviewer_name": reviewer.username if reviewer else None,
+            "reviewed_at": reviewed_at,
+            "approval_status": approval_status,
+            "updated_at": max(a.updated_at for a in annotations),
+        })
+    
+    return {
+        "annotations": result,
+        "total": total_pairs,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/annotation-log/summary")
+def get_annotation_log_summary(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Get summary statistics for the annotation log (grouped by image+annotator)."""
+    from sqlalchemy import func, distinct
+    
+    # Total unique image+annotator pairs with completed annotations
+    total_image_annotator_pairs = (
+        db.query(func.count(distinct(func.concat(Annotation.image_id, '-', Annotation.annotator_id))))
+        .filter(Annotation.status == "completed")
+        .scalar() or 0
+    )
+    
+    # Get all completed annotations for detailed stats
+    completed_annotations = (
+        db.query(Annotation)
+        .filter(Annotation.status == "completed")
+        .all()
+    )
+    
+    # Group by image+annotator to calculate stats
+    pairs_data = {}
+    for a in completed_annotations:
+        key = (a.image_id, a.annotator_id)
+        if key not in pairs_data:
+            pairs_data[key] = {
+                'has_rework': False,
+                'all_approved': True,
+                'time_spent': 0,
+                'rework_time': 0,
+            }
+        if a.is_rework:
+            pairs_data[key]['has_rework'] = True
+        if a.review_status != "approved":
+            pairs_data[key]['all_approved'] = False
+        pairs_data[key]['time_spent'] = max(pairs_data[key]['time_spent'], a.time_spent_seconds or 0)
+        pairs_data[key]['rework_time'] = max(pairs_data[key]['rework_time'], a.rework_time_seconds or 0)
+    
+    total_reworks = sum(1 for p in pairs_data.values() if p['has_rework'])
+    total_approved = sum(1 for p in pairs_data.values() if p['all_approved'])
+    total_pending = sum(1 for p in pairs_data.values() if not p['all_approved'] and not p['has_rework'])
+    
+    # Calculate average times
+    times_spent = [p['time_spent'] for p in pairs_data.values() if p['time_spent'] > 0]
+    rework_times = [p['rework_time'] for p in pairs_data.values() if p['rework_time'] > 0]
+    
+    avg_annotation_time = sum(times_spent) / len(times_spent) if times_spent else 0
+    avg_rework_time = sum(rework_times) / len(rework_times) if rework_times else 0
+    
+    return {
+        "total_annotations": total_image_annotator_pairs,
+        "total_reworks": total_reworks,
+        "total_approved": total_approved,
+        "total_pending": total_pending,
+        "avg_annotation_time_seconds": round(avg_annotation_time),
+        "avg_rework_time_seconds": round(avg_rework_time),
+    }
+
+
+# ── Send for Rework ──────────────────────────────────────────────
+
+class ReworkRequest(BaseModel):
+    reason: str
+
+
+@router.post("/annotations/{annotation_id}/rework")
+def send_annotation_for_rework(
+    annotation_id: int,
+    payload: ReworkRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Send an annotation back for rework.
+    This resets the status to 'in_progress', creates a notification for the annotator,
+    and tracks that this is a rework.
+    """
+    annotation = db.query(Annotation).filter(Annotation.id == annotation_id).first()
+    if not annotation:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    
+    if annotation.status != "completed":
+        raise HTTPException(status_code=400, detail="Only completed annotations can be sent for rework")
+    
+    # Reset annotation status
+    annotation.status = "in_progress"
+    annotation.review_status = "rework_requested"
+    annotation.review_note = payload.reason
+    annotation.reviewed_by = admin.id
+    annotation.reviewed_at = datetime.now(timezone.utc)
+    annotation.is_rework = True
+    annotation.rework_time_seconds = 0  # Reset rework time
+    
+    # Get image info for the notification
+    image = db.query(Image).filter(Image.id == annotation.image_id).first()
+    category = db.query(Category).filter(Category.id == annotation.category_id).first()
+    
+    # Create notification for the annotator
+    notification = Notification(
+        user_id=annotation.annotator_id,
+        type="rework_request",
+        title="Rework Required",
+        message=f"Image '{image.filename}' - Category '{category.name}' needs rework. Reason: {payload.reason}",
+        image_id=annotation.image_id,
+    )
+    db.add(notification)
+    
+    db.commit()
+    
+    return {
+        "message": "Annotation sent for rework",
+        "annotation_id": annotation_id,
+        "annotator_id": annotation.annotator_id,
+    }

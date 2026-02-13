@@ -3,6 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
+// Helper to get proxied image URL for Google Drive images
+const getImageUrl = (imageId) => {
+  if (!imageId) return '';
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
+};
+
 function CategoryDropdown({ category, annotation, completedByOther, onChange, disabled }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOptions, setSelectedOptions] = useState(
@@ -202,8 +208,6 @@ function RequestEditModal({ isOpen, onClose, onConfirm, loading }) {
   );
 }
 
-const TIMER_LIMIT_SECONDS = 120; // 2 minutes
-
 export default function ImageAnnotationPage() {
   const { imageId } = useParams();
   const navigate = useNavigate();
@@ -221,11 +225,19 @@ export default function ImageAnnotationPage() {
   const [showEditRequestModal, setShowEditRequestModal] = useState(false);
   const [requestingEdit, setRequestingEdit] = useState(false);
 
+  // Time limit settings (fetched from API)
+  const [maxAnnotationTime, setMaxAnnotationTime] = useState(120);
+  const [maxReworkTime, setMaxReworkTime] = useState(120);
+  const [isReworkMode, setIsReworkMode] = useState(false);
+
   // Timer state — tracks time per image, persists to DB automatically
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const elapsedRef = useRef(0); // mirrors elapsedSeconds for use in non-reactive callbacks
   const imageIdRef = useRef(imageId); // current imageId for use in cleanup/beforeunload
+
+  // Compute the current max time based on mode
+  const currentMaxTime = isReworkMode ? maxReworkTime : maxAnnotationTime;
 
   // Keep refs in sync with state
   useEffect(() => { elapsedRef.current = elapsedSeconds; }, [elapsedSeconds]);
@@ -281,26 +293,49 @@ export default function ImageAnnotationPage() {
     prevImageIdRef.current = imageId;
   }, [imageId, persistTime]);
 
+  // Fetch time limit settings from API on mount
+  useEffect(() => {
+    api.get('/annotator/settings/time-limits')
+      .then(res => {
+        setMaxAnnotationTime(res.data.max_annotation_time_seconds || 120);
+        setMaxReworkTime(res.data.max_rework_time_seconds || 120);
+      })
+      .catch(() => {
+        // Use defaults if API fails
+        setMaxAnnotationTime(120);
+        setMaxReworkTime(120);
+      });
+  }, []);
+
   // Timer tick
   useEffect(() => {
     const interval = setInterval(() => {
       setElapsedSeconds((prev) => {
         const next = prev + 1;
-        if (next >= TIMER_LIMIT_SECONDS && !showTimeWarning) {
-          setShowTimeWarning(true);
-        }
         return next;
       });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [showTimeWarning]);
+  }, []);
+
+  // Check for time warning whenever elapsed changes
+  useEffect(() => {
+    if (elapsedSeconds >= currentMaxTime && !showTimeWarning) {
+      setShowTimeWarning(true);
+    }
+  }, [elapsedSeconds, currentMaxTime, showTimeWarning]);
 
   const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    const absSeconds = Math.abs(seconds);
+    const mins = Math.floor(absSeconds / 60);
+    const secs = absSeconds % 60;
+    const prefix = seconds < 0 ? '-' : '';
+    return `${prefix}${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Compute remaining time for countdown display
+  const remainingSeconds = currentMaxTime - elapsedSeconds;
 
   const loadImage = useCallback(async (id) => {
     setLoading(true);
@@ -324,9 +359,20 @@ export default function ImageAnnotationPage() {
         }
       });
       setPendingChanges(initial);
+      
+      // Detect if this is a rework (any category has review_status = 'rework_requested' or 'rework_completed')
+      const hasRework = res.data.categories.some(cat => 
+        cat.annotation?.review_status === 'rework_requested' || cat.annotation?.is_rework
+      );
+      setIsReworkMode(hasRework);
+      
+      // For rework, use rework_time_seconds, otherwise use time_spent_seconds
       // Resume timer from DB-saved value
       setElapsedSeconds(maxSavedTime);
-      setShowTimeWarning(maxSavedTime >= TIMER_LIMIT_SECONDS);
+      
+      // Check if we're already over the limit
+      const effectiveMaxTime = hasRework ? maxReworkTime : maxAnnotationTime;
+      setShowTimeWarning(maxSavedTime >= effectiveMaxTime);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load image');
     } finally {
@@ -531,18 +577,19 @@ export default function ImageAnnotationPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Timer */}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
-              showTimeWarning 
+            {/* Countdown Timer */}
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+              remainingSeconds <= 0
                 ? 'bg-red-100 text-red-700 animate-pulse' 
-                : elapsedSeconds >= 90 
+                : remainingSeconds <= 30 
                   ? 'bg-amber-100 text-amber-700' 
-                  : 'bg-gray-100 text-gray-600'
+                  : 'bg-emerald-100 text-emerald-700'
             }`}>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {formatTime(elapsedSeconds)}
+              {remainingSeconds >= 0 ? formatTime(remainingSeconds) : `+${formatTime(Math.abs(remainingSeconds))}`}
+              {isReworkMode && <span className="ml-1 text-[10px] opacity-70">rework</span>}
             </div>
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
@@ -579,7 +626,7 @@ export default function ImageAnnotationPage() {
               </button>
             )}
             
-            <img src={data?.url} alt={data?.filename} className={`max-w-full max-h-full object-contain rounded-lg ${isImproper ? 'opacity-50' : ''}`} />
+            <img src={getImageUrl(data?.image_id)} alt={data?.filename} className={`max-w-full max-h-full object-contain rounded-lg ${isImproper ? 'opacity-50' : ''}`} />
             
             {data?.next_image_id && (
               <button onClick={() => handleNavigate(data.next_image_id)} className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/25 backdrop-blur-sm rounded-full flex items-center justify-center text-white transition cursor-pointer z-20 shadow-lg">

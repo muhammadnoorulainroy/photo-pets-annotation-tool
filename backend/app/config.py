@@ -10,6 +10,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = ""  # comma-separated origins
     SEED_ADMINS: str = "[]"  # JSON array of {username, password, full_name}
     BACKEND_URL: str = "http://localhost:8000"
+    
+    # Google Drive Service Account credentials
+    GOOGLE_SERVICE_ACCOUNT_TYPE: str = "service_account"
+    GOOGLE_SERVICE_ACCOUNT_PROJECT_ID: str = ""
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID: str = ""
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: str = ""
+    GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL: str = ""
+    GOOGLE_SERVICE_ACCOUNT_CLIENT_ID: str = ""
+    GOOGLE_DRIVE_FOLDER_ID: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

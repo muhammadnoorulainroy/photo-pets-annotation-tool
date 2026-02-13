@@ -25,3 +25,6 @@ class User(Base):
     edit_requests = relationship(
         "EditRequest", back_populates="user", foreign_keys="[EditRequest.user_id]"
     )
+    notifications = relationship(
+        "Notification", back_populates="user", cascade="all, delete-orphan"
+    )

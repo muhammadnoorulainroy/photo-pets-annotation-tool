@@ -11,6 +11,8 @@ from app.models.option import Option
 from app.models.annotation import Annotation, AnnotationSelection
 from app.models.annotator_category import AnnotatorCategory
 from app.models.image_assignment import AnnotatorImageAssignment
+from app.models.settings import SystemSettings
+from app.models.notification import Notification
 from app.schemas.category import CategoryWithProgress
 from app.schemas.annotation import AnnotationSave, AnnotationResponse, AnnotationTask
 
@@ -58,6 +60,22 @@ def _get_assigned_image_ids(db: Session, user_id: int) -> set[int]:
     return _get_available_image_ids(db, user_id)
 
 router = APIRouter(prefix="/annotator", tags=["Annotator"])
+
+
+def _get_setting(db: Session, key: str, default: str) -> str:
+    """Get a setting value or return default if not found."""
+    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+    return setting.value if setting else default
+
+
+def _get_max_annotation_time(db: Session) -> int:
+    """Get max annotation time in seconds (default 120)."""
+    return int(_get_setting(db, "max_annotation_time_seconds", "120"))
+
+
+def _get_max_rework_time(db: Session) -> int:
+    """Get max rework time in seconds (default 120)."""
+    return int(_get_setting(db, "max_rework_time_seconds", "120"))
 
 
 def _build_queue(db: Session, user_id: int, category_id: int) -> list[Image]:
@@ -530,6 +548,16 @@ def save_image_annotations(
     
     annotations_data = payload.get("annotations", {})
     time_spent_seconds = payload.get("time_spent_seconds", 0)
+    is_rework_submission = payload.get("is_rework", False)
+    
+    # Cap time at max limit
+    max_annotation_time = _get_max_annotation_time(db)
+    max_rework_time = _get_max_rework_time(db)
+    
+    if is_rework_submission:
+        capped_time = min(time_spent_seconds, max_rework_time)
+    else:
+        capped_time = min(time_spent_seconds, max_annotation_time)
     
     # Validate that all assigned categories have at least one option selected
     # Check for categories that are not completed by others
@@ -587,9 +615,20 @@ def save_image_annotations(
         )
         
         if annotation:
+            # Check if this is a rework submission
+            was_rework = annotation.is_rework or annotation.review_status == "rework_requested"
+            
             annotation.is_duplicate = is_duplicate
             annotation.status = "completed"
-            annotation.time_spent_seconds = time_spent_seconds
+            
+            if was_rework:
+                # This is a rework - store time in rework_time_seconds
+                annotation.rework_time_seconds = capped_time
+                annotation.review_status = "rework_completed"
+            else:
+                # Normal annotation
+                annotation.time_spent_seconds = capped_time
+            
             # Clear old selections
             db.query(AnnotationSelection).filter(
                 AnnotationSelection.annotation_id == annotation.id
@@ -601,7 +640,7 @@ def save_image_annotations(
                 category_id=cat_id,
                 is_duplicate=is_duplicate,
                 status="completed",
-                time_spent_seconds=time_spent_seconds,
+                time_spent_seconds=capped_time,
             )
             db.add(annotation)
             db.flush()
@@ -1196,3 +1235,95 @@ def list_my_edit_requests(
         })
     
     return result
+
+
+# ── Notifications ────────────────────────────────────────────────
+
+@router.get("/notifications")
+def list_notifications(
+    unread_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """List notifications for this annotator."""
+    query = db.query(Notification).filter(Notification.user_id == user.id)
+    
+    if unread_only:
+        query = query.filter(Notification.is_read == False)
+    
+    notifications = query.order_by(Notification.created_at.desc()).limit(50).all()
+    
+    return [
+        {
+            "id": n.id,
+            "type": n.type,
+            "title": n.title,
+            "message": n.message,
+            "image_id": n.image_id,
+            "is_read": n.is_read,
+            "created_at": n.created_at,
+        }
+        for n in notifications
+    ]
+
+
+@router.get("/notifications/unread-count")
+def get_unread_notification_count(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """Get count of unread notifications."""
+    count = (
+        db.query(Notification)
+        .filter(Notification.user_id == user.id, Notification.is_read == False)
+        .count()
+    )
+    return {"count": count}
+
+
+@router.put("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """Mark a notification as read."""
+    notification = (
+        db.query(Notification)
+        .filter(Notification.id == notification_id, Notification.user_id == user.id)
+        .first()
+    )
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    notification.is_read = True
+    db.commit()
+    return {"message": "Notification marked as read"}
+
+
+@router.put("/notifications/read-all")
+def mark_all_notifications_read(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """Mark all notifications as read."""
+    db.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.is_read == False
+    ).update({"is_read": True})
+    db.commit()
+    return {"message": "All notifications marked as read"}
+
+
+# ── Settings (read-only for annotators) ──────────────────────────
+
+@router.get("/settings/time-limits")
+def get_time_limits(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_annotator),
+):
+    """Get time limit settings for countdown timer."""
+    return {
+        "max_annotation_time_seconds": _get_max_annotation_time(db),
+        "max_rework_time_seconds": _get_max_rework_time(db),
+    }

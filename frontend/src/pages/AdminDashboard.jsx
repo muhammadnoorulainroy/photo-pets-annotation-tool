@@ -5,6 +5,12 @@ import api from '../api/client';
 
 const PAGE_SIZE = 10;
 
+// Helper to get proxied image URL for Google Drive images
+const getImageUrl = (imageId) => {
+  if (!imageId) return '';
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
+};
+
 function formatTimeSpent(seconds) {
   if (!seconds || seconds <= 0) return null;
   const mins = Math.floor(seconds / 60);
@@ -814,7 +820,7 @@ function ImageCompletionTab() {
             <div key={img.image_id} className="bg-white rounded-xl border border-gray-200 p-4">
               <div className="flex items-start gap-4">
                 <img
-                  src={img.image_url}
+                  src={getImageUrl(img.image_id)}
                   alt={img.image_filename}
                   className="w-20 h-20 rounded-lg object-cover shrink-0"
                 />
@@ -913,7 +919,7 @@ function ImagesTab() {
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {paginatedImages.map((img) => (
           <div key={img.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
-            <img src={img.url} alt={img.filename} className="w-full h-32 object-cover" />
+            <img src={getImageUrl(img.id)} alt={img.filename} className="w-full h-32 object-cover" />
             <div className="px-3 py-2">
               <p className="text-xs text-gray-500 truncate">{img.filename}</p>
             </div>
@@ -1111,7 +1117,7 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
               </button>
             )}
-            <img src={row.image_url} alt={row.image_filename} className="max-w-full max-h-full object-contain rounded-lg" />
+            <img src={getImageUrl(row.image_id)} alt={row.image_filename} className="max-w-full max-h-full object-contain rounded-lg" />
             {currentIdx < tableImages.length - 1 && (
               <button
                 onClick={() => onNavigate(tableImages[currentIdx + 1])}
@@ -1173,9 +1179,15 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
                     )}
                     <span className="text-[10px] text-gray-400 ml-auto flex items-center gap-1.5">
                       {formatTimeSpent(cell.time_spent_seconds) && (
-                        <span className="flex items-center gap-0.5 text-gray-400">
+                        <span className="flex items-center gap-0.5 text-gray-400" title="Initial annotation time">
                           <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           {formatTimeSpent(cell.time_spent_seconds)}
+                        </span>
+                      )}
+                      {cell.rework_time_seconds > 0 && (
+                        <span className="flex items-center gap-0.5 text-amber-500" title="Rework time">
+                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                          +{formatTimeSpent(cell.rework_time_seconds)}
                         </span>
                       )}
                       {cell.annotator_username}
@@ -1389,6 +1401,36 @@ function ReviewTab() {
     setEditingCell(null);
     cancelEditing();
     refreshData();
+  };
+
+  // ── Send for Rework ──
+  const [showReworkModal, setShowReworkModal] = useState(false);
+  const [reworkAnnotationId, setReworkAnnotationId] = useState(null);
+  const [reworkReason, setReworkReason] = useState('');
+  const [sendingRework, setSendingRework] = useState(false);
+
+  const openReworkModal = (annotationId) => {
+    setReworkAnnotationId(annotationId);
+    setReworkReason('');
+    setShowReworkModal(true);
+  };
+
+  const handleSendRework = async () => {
+    if (!reworkReason.trim()) {
+      alert('Please provide a reason for rework');
+      return;
+    }
+    setSendingRework(true);
+    try {
+      await api.post(`/admin/annotations/${reworkAnnotationId}/rework`, { reason: reworkReason });
+      setShowReworkModal(false);
+      setReworkAnnotationId(null);
+      setReworkReason('');
+      refreshData();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to send for rework');
+    }
+    setSendingRework(false);
   };
 
   // ── Bulk approve ──
@@ -1715,7 +1757,7 @@ function ReviewTab() {
                                 className="flex items-center gap-2.5 cursor-zoom-in"
                                 onClick={() => setModalRow(row)}
                               >
-                                <img src={row.image_url} alt={row.image_filename} className="w-14 h-14 rounded-lg object-cover shrink-0 ring-1 ring-gray-200" />
+                                <img src={getImageUrl(row.image_id)} alt={row.image_filename} className="w-14 h-14 rounded-lg object-cover shrink-0 ring-1 ring-gray-200" />
                                 <span className="text-xs font-medium text-gray-800 truncate max-w-[110px]">{row.image_filename}</span>
                               </div>
                             </td>
@@ -1744,9 +1786,15 @@ function ReviewTab() {
                                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cell.review_status === 'approved' ? 'bg-green-500' : 'bg-amber-400'}`} />
                                       <span className="text-[10px] text-gray-500 truncate">{cell.annotator_username}</span>
                                       {formatTimeSpent(cell.time_spent_seconds) && (
-                                        <span className="text-[9px] text-gray-400 flex items-center gap-0.5" title="Time spent">
+                                        <span className="text-[9px] text-gray-400 flex items-center gap-0.5" title="Initial annotation time">
                                           <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                           {formatTimeSpent(cell.time_spent_seconds)}
+                                        </span>
+                                      )}
+                                      {cell.rework_time_seconds > 0 && (
+                                        <span className="text-[9px] text-amber-500 flex items-center gap-0.5" title="Rework time">
+                                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                          +{formatTimeSpent(cell.rework_time_seconds)}
                                         </span>
                                       )}
                                       {cell.is_duplicate === true && (
@@ -1813,7 +1861,7 @@ function ReviewTab() {
                   <div key={a.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div className="flex items-start gap-4 p-4">
                       <img
-                        src={a.image_url}
+                        src={getImageUrl(a.image_id)}
                         alt={a.image_filename}
                         className="w-28 h-28 rounded-lg object-cover shrink-0"
                       />
@@ -1830,8 +1878,23 @@ function ReviewTab() {
                             <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full">Duplicate</span>
                           )}
                         </div>
-                        <p className="text-xs text-gray-500 mb-2">
-                          Annotated by <span className="font-medium">{a.annotator_username}</span>
+                        <p className="text-xs text-gray-500 mb-2 flex items-center gap-3">
+                          <span>Annotated by <span className="font-medium">{a.annotator_username}</span></span>
+                          {formatTimeSpent(a.time_spent_seconds) && (
+                            <span className="flex items-center gap-1 text-gray-400" title="Initial annotation time">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                              {formatTimeSpent(a.time_spent_seconds)}
+                            </span>
+                          )}
+                          {a.rework_time_seconds > 0 && (
+                            <span className="flex items-center gap-1 text-amber-500" title="Rework time">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                              +{formatTimeSpent(a.rework_time_seconds)}
+                            </span>
+                          )}
+                          {a.is_rework && (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded-full">Rework</span>
+                          )}
                         </p>
 
                         {!isEditing && (
@@ -1878,6 +1941,14 @@ function ReviewTab() {
                           >
                             Edit & Approve
                           </button>
+                          {a.review_status !== 'rework_requested' && (
+                            <button
+                              onClick={() => openReworkModal(a.id)}
+                              className="px-3 py-1.5 border border-amber-300 text-amber-600 text-xs font-medium rounded-lg hover:bg-amber-50 cursor-pointer"
+                            >
+                              Send for Rework
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1984,6 +2055,57 @@ function ReviewTab() {
 
       {/* Shortcuts help */}
       <ShortcutsHelp show={showShortcuts} onClose={() => setShowShortcuts(false)} />
+
+      {/* Rework Modal */}
+      {showReworkModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-slide-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Send for Rework</h3>
+                <p className="text-sm text-gray-500">The annotator will be notified to redo this annotation</p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Reason for rework</label>
+              <textarea
+                value={reworkReason}
+                onChange={(e) => setReworkReason(e.target.value)}
+                placeholder="Please describe what needs to be corrected..."
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowReworkModal(false);
+                  setReworkAnnotationId(null);
+                  setReworkReason('');
+                }}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer"
+                disabled={sendingRework}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendRework}
+                disabled={sendingRework || !reworkReason.trim()}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 rounded-xl transition cursor-pointer disabled:opacity-50"
+              >
+                {sendingRework ? 'Sending...' : 'Send for Rework'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2065,7 +2187,7 @@ function ImproperImagesTab() {
               <div key={img.id} className="bg-white rounded-xl border border-red-200 overflow-hidden">
                 <div className="flex items-start gap-4 p-4">
                   <img
-                    src={img.url}
+                    src={getImageUrl(img.id)}
                     alt={img.filename}
                     className="w-32 h-32 rounded-lg object-cover shrink-0 ring-2 ring-red-200"
                   />
@@ -2235,7 +2357,7 @@ function EditRequestsTab() {
               }`}>
                 <div className="flex items-start gap-4 p-4">
                   <img
-                    src={req.image_url}
+                    src={getImageUrl(req.image_id)}
                     alt={req.image_filename}
                     className="w-24 h-24 rounded-lg object-cover shrink-0 ring-1 ring-gray-200"
                   />
@@ -2309,6 +2431,432 @@ function EditRequestsTab() {
   );
 }
 
+// ─── Annotation Log Tab (Time Tracking) ─────────────────────
+
+function AnnotationLogTab() {
+  const [data, setData] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [annotatorFilter, setAnnotatorFilter] = useState('');
+  const [users, setUsers] = useState([]);
+  const pageSize = 20;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('page', page);
+      params.set('page_size', pageSize);
+      if (statusFilter !== 'all') params.set('status_filter', statusFilter);
+      if (annotatorFilter) params.set('annotator_id', annotatorFilter);
+
+      const [logRes, summaryRes, usersRes] = await Promise.all([
+        api.get(`/admin/annotation-log?${params.toString()}`),
+        api.get('/admin/annotation-log/summary'),
+        api.get('/admin/users'),
+      ]);
+      setData(logRes.data);
+      setSummary(summaryRes.data);
+      setUsers(usersRes.data.filter(u => u.role === 'annotator'));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [page, statusFilter, annotatorFilter]);
+
+  const formatTime = (seconds) => {
+    if (!seconds || seconds <= 0) return '-';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
+  };
+
+  const totalPages = data ? Math.ceil(data.total / pageSize) : 1;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Annotation Time Log</h2>
+          <p className="text-sm text-gray-500 mt-1">Track time spent on each annotation by annotators</p>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-gray-900">{summary.total_annotations}</p>
+            <p className="text-xs text-gray-500 font-medium">Total Annotations</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-emerald-600">{summary.total_approved}</p>
+            <p className="text-xs text-gray-500 font-medium">Approved</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-amber-600">{summary.total_pending}</p>
+            <p className="text-xs text-gray-500 font-medium">Pending Review</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-purple-600">{summary.total_reworks}</p>
+            <p className="text-xs text-gray-500 font-medium">Reworks</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-indigo-600">{formatTime(summary.avg_annotation_time_seconds)}</p>
+            <p className="text-xs text-gray-500 font-medium">Avg Annotation Time</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <p className="text-2xl font-bold text-orange-600">{formatTime(summary.avg_rework_time_seconds)}</p>
+            <p className="text-xs text-gray-500 font-medium">Avg Rework Time</p>
+          </div>
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Status:</label>
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">All</option>
+            <option value="annotated">Annotated</option>
+            <option value="rework">Rework</option>
+            <option value="approved">Approved</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Annotator:</label>
+          <select
+            value={annotatorFilter}
+            onChange={(e) => { setAnnotatorFilter(e.target.value); setPage(1); }}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">All Annotators</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>{u.username}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={load}
+          className="ml-auto px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+        </div>
+      ) : !data || data.annotations.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-2xl flex items-center justify-center">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-700">No annotations found</h3>
+          <p className="text-gray-500 mt-1">Annotations will appear here once annotators submit their work.</p>
+        </div>
+      ) : (
+        <>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Image</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Annotator</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Categories</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Labelling Status</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Time Taken</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Reviewer</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Approval Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data.annotations.map((a) => (
+                    <tr key={`${a.image_id}-${a.annotator_id}`} className="hover:bg-gray-50 transition">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={getImageUrl(a.image_id)}
+                            alt={a.image_name}
+                            className="w-10 h-10 rounded-lg object-cover shrink-0"
+                          />
+                          <span className="font-medium text-gray-900 truncate max-w-[150px]">{a.image_name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold">
+                            {a.annotator_name[0].toUpperCase()}
+                          </div>
+                          <span className="text-gray-700">{a.annotator_name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {a.categories && a.categories.length <= 2 ? (
+                            a.categories.map((cat, i) => (
+                              <span key={i} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-full">
+                                {cat}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-full cursor-help" title={a.categories?.join(', ')}>
+                              {a.category_count || a.categories?.length} categories
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          a.labelling_status === 'Rework'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {a.labelling_status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="font-medium text-gray-900">{formatTime(a.time_taken_seconds)}</span>
+                          {a.rework_time_seconds > 0 && (
+                            <span className="text-[10px] text-gray-400">
+                              (+{formatTime(a.rework_time_seconds)} rework)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {a.reviewer_name ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white text-[9px] font-bold">
+                              {a.reviewer_name[0].toUpperCase()}
+                            </div>
+                            <span className="text-gray-700 text-xs">{a.reviewer_name}</span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          a.approval_status === 'Approved'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : a.approval_status === 'Rework Requested'
+                              ? 'bg-red-100 text-red-700'
+                              : a.approval_status === 'Rework Completed'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {a.approval_status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <span>Showing {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, data.total)} of {data.total}</span>
+              <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Settings Tab ────────────────────────────────────────────
+
+function SettingsTab() {
+  const [settings, setSettings] = useState({
+    max_annotation_time_seconds: 120,
+    max_rework_time_seconds: 120,
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  useEffect(() => {
+    api.get('/admin/settings')
+      .then(res => {
+        setSettings(res.data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await api.put('/admin/settings', settings);
+      setSettings(res.data);
+      setMessage({ type: 'success', text: 'Settings saved successfully!' });
+    } catch (err) {
+      setMessage({ type: 'error', text: err.response?.data?.detail || 'Failed to save settings' });
+    }
+    setSaving(false);
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-8 h-8 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Settings</h2>
+        <p className="text-sm text-gray-500 mt-1">Configure annotation time limits and other system settings.</p>
+      </div>
+
+      {message && (
+        <div className={`p-4 rounded-xl border ${
+          message.type === 'success' 
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+            : 'bg-red-50 border-red-200 text-red-700'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+            <svg className="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Time Limits
+          </h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Set maximum time allowed for annotations. Time spent beyond this limit won't be recorded.
+          </p>
+        </div>
+
+        <div className="p-5 space-y-6">
+          {/* Max Annotation Time */}
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">Initial Annotation Time Limit</span>
+              <p className="text-xs text-gray-500 mt-0.5">Maximum time for first-time annotation of an image</p>
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range"
+                min={30}
+                max={600}
+                step={10}
+                value={settings.max_annotation_time_seconds}
+                onChange={(e) => setSettings(s => ({ ...s, max_annotation_time_seconds: parseInt(e.target.value) }))}
+                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+              />
+              <div className="w-24 text-center">
+                <span className="text-lg font-bold text-gray-900">{formatTime(settings.max_annotation_time_seconds)}</span>
+                <p className="text-[10px] text-gray-400">min:sec</p>
+              </div>
+            </div>
+            <div className="flex justify-between text-[10px] text-gray-400 px-1">
+              <span>30s</span>
+              <span>2min</span>
+              <span>5min</span>
+              <span>10min</span>
+            </div>
+          </div>
+
+          {/* Max Rework Time */}
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-sm font-medium text-gray-700">Rework Annotation Time Limit</span>
+              <p className="text-xs text-gray-500 mt-0.5">Maximum time for re-annotating images sent back for rework</p>
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range"
+                min={30}
+                max={600}
+                step={10}
+                value={settings.max_rework_time_seconds}
+                onChange={(e) => setSettings(s => ({ ...s, max_rework_time_seconds: parseInt(e.target.value) }))}
+                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+              />
+              <div className="w-24 text-center">
+                <span className="text-lg font-bold text-gray-900">{formatTime(settings.max_rework_time_seconds)}</span>
+                <p className="text-[10px] text-gray-400">min:sec</p>
+              </div>
+            </div>
+            <div className="flex justify-between text-[10px] text-gray-400 px-1">
+              <span>30s</span>
+              <span>2min</span>
+              <span>5min</span>
+              <span>10min</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm font-medium rounded-xl hover:from-indigo-600 hover:to-purple-600 transition shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
+      </div>
+
+      {/* Info Box */}
+      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-100 p-5">
+        <h4 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          How Time Limits Work
+        </h4>
+        <ul className="mt-2 space-y-1 text-sm text-indigo-800">
+          <li>• Annotators see a <strong>countdown timer</strong> starting from the max time</li>
+          <li>• If they take longer, a "Performance Warning" is shown</li>
+          <li>• <strong>Logged time</strong> is capped at the max (never records more than the limit)</li>
+          <li>• Rework annotations use the separate rework time limit</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -2317,7 +2865,7 @@ export default function AdminDashboard() {
   const { user, logout } = useAuth();
 
   // Derive active tab from URL path: /admin/review -> 'review', /admin -> 'users'
-  const VALID_TABS = ['users', 'progress', 'review', 'completion', 'images', 'improper', 'edit-requests'];
+  const VALID_TABS = ['users', 'progress', 'review', 'completion', 'images', 'improper', 'edit-requests', 'annotation-log', 'settings'];
   const pathSegment = location.pathname.replace(/^\/admin\/?/, '').split('/')[0] || 'users';
   const activeTab = VALID_TABS.includes(pathSegment) ? pathSegment : 'users';
 
@@ -2346,6 +2894,12 @@ export default function AdminDashboard() {
     )},
     { key: 'edit-requests', label: 'Edit Requests', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+    )},
+    { key: 'annotation-log', label: 'Time Log', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+    )},
+    { key: 'settings', label: 'Settings', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
     )},
   ];
 
@@ -2413,6 +2967,8 @@ export default function AdminDashboard() {
           {activeTab === 'images' && <ImagesTab />}
           {activeTab === 'improper' && <ImproperImagesTab />}
           {activeTab === 'edit-requests' && <EditRequestsTab />}
+          {activeTab === 'annotation-log' && <AnnotationLogTab />}
+          {activeTab === 'settings' && <SettingsTab />}
         </div>
       </main>
     </div>

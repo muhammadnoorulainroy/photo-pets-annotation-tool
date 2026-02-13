@@ -94,6 +94,8 @@ class ReviewAnnotationDetail(BaseModel):
     selected_options: list[dict]  # [{id, label}]
     all_options: list[dict]  # [{id, label, is_typical}] — all options in category for editing
     time_spent_seconds: int = 0
+    rework_time_seconds: int = 0
+    is_rework: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -109,6 +111,8 @@ class ReviewTableCell(BaseModel):
     is_duplicate: Optional[bool]
     review_status: Optional[str]
     time_spent_seconds: int = 0
+    rework_time_seconds: int = 0
+    is_rework: bool = False
 
 
 class ReviewTableRow(BaseModel):

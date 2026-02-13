@@ -3,6 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 
+// Helper to get proxied image URL for Google Drive images
+const getImageUrl = (imageId) => {
+  if (!imageId) return '';
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
+};
+
 export default function AnnotationPage() {
   const { categoryId } = useParams();
   const navigate = useNavigate();
@@ -303,7 +309,7 @@ export default function AnnotationPage() {
           {/* Left: Image — fills all remaining space */}
           <div className="bg-gray-900 rounded-xl overflow-hidden relative min-h-0 ring-1 ring-gray-800">
             <img
-              src={task?.image_url}
+              src={getImageUrl(task?.image_id)}
               alt={task?.image_filename}
               className="absolute inset-0 w-full h-full object-contain"
               loading="eager"
