@@ -254,16 +254,46 @@ def list_images_for_annotator(
         )
         completed_cat_ids = {a.category_id for a in completed_by_anyone}
         
-        # Build status per category
+        # Build status per category and collect selected labels
         category_status = {}
+        category_labels = {}  # category_id -> list of selected option labels
         for cat_id in assigned_cat_ids:
             my_ann = next((a for a in my_annotations if a.category_id == cat_id), None)
             if my_ann:
                 category_status[str(cat_id)] = my_ann.status
+                # Get selected option labels
+                selections = (
+                    db.query(AnnotationSelection)
+                    .filter(AnnotationSelection.annotation_id == my_ann.id)
+                    .all()
+                )
+                selected_option_ids = [s.option_id for s in selections]
+                if selected_option_ids:
+                    options = db.query(Option).filter(Option.id.in_(selected_option_ids)).all()
+                    category_labels[str(cat_id)] = [o.label for o in options]
+                else:
+                    category_labels[str(cat_id)] = []
             elif cat_id in completed_cat_ids:
                 category_status[str(cat_id)] = "completed_by_other"
+                # Get labels from completed annotation
+                completed_ann = next((a for a in completed_by_anyone if a.category_id == cat_id), None)
+                if completed_ann:
+                    selections = (
+                        db.query(AnnotationSelection)
+                        .filter(AnnotationSelection.annotation_id == completed_ann.id)
+                        .all()
+                    )
+                    selected_option_ids = [s.option_id for s in selections]
+                    if selected_option_ids:
+                        options = db.query(Option).filter(Option.id.in_(selected_option_ids)).all()
+                        category_labels[str(cat_id)] = [o.label for o in options]
+                    else:
+                        category_labels[str(cat_id)] = []
+                else:
+                    category_labels[str(cat_id)] = []
             else:
                 category_status[str(cat_id)] = "pending"
+                category_labels[str(cat_id)] = []
         
         # Determine overall status
         statuses = list(category_status.values())
@@ -285,17 +315,24 @@ def list_images_for_annotator(
             a.review_status == "rework_requested" for a in my_annotations
         )
         
+        # Check if any annotation is human-validated (locked)
+        is_human_validated = any(
+            a.human_validated for a in my_annotations
+        )
+        
         images_data.append({
             "id": img.id,
             "filename": img.filename,
             "url": img.url,
             "category_status": category_status,
+            "category_labels": category_labels,  # Selected labels per category
             "overall_status": overall_status,
             "completed_count": sum(1 for s in statuses if s in ("completed", "completed_by_other")),
             "total_categories": len(assigned_cat_ids),
             "is_improper": img.is_improper,
             "improper_reason": img.improper_reason,
             "has_rework": has_rework,  # True if any annotation needs rework
+            "is_human_validated": is_human_validated,  # True if validated by human (locked)
         })
     
     # Paginate
@@ -430,9 +467,10 @@ def get_image_for_annotation(
     next_id = assigned_image_ids_sorted[current_idx + 1] if current_idx < len(assigned_image_ids_sorted) - 1 else None
     
     # Check edit lock status
+    # Only lock if annotations have been human-validated (not just model predictions)
     from app.models.edit_request import EditRequest
-    completed_annotations_count = len([a for a in my_annotations if a.status == "completed"])
-    is_locked = completed_annotations_count > 0
+    human_validated_count = len([a for a in my_annotations if a.human_validated])
+    is_locked = human_validated_count > 0
     
     # Check if any annotation is sent for rework - if so, allow editing without permission
     has_rework_request = any(
@@ -529,19 +567,20 @@ def save_image_annotations(
         .all()
     ]
     
-    # Check if image has completed annotations (locked)
-    completed_annotations = (
+    # Check if image has human-validated annotations (locked)
+    # Model predictions (human_validated=False) don't trigger the lock
+    human_validated_count = (
         db.query(Annotation)
         .filter(
             Annotation.image_id == image_id,
             Annotation.annotator_id == user.id,
             Annotation.category_id.in_(assigned_cat_ids_list),
-            Annotation.status == "completed",
+            Annotation.human_validated == True,
         )
         .count()
     )
     
-    if completed_annotations > 0:
+    if human_validated_count > 0:
         # Check if any annotation is sent for rework - if so, allow editing
         has_rework_request = (
             db.query(Annotation)
@@ -650,6 +689,7 @@ def save_image_annotations(
             
             annotation.is_duplicate = is_duplicate
             annotation.status = "completed"
+            annotation.human_validated = True  # Mark as validated by human
             
             if was_rework:
                 # This is a rework - store time in rework_time_seconds
@@ -671,6 +711,7 @@ def save_image_annotations(
                 is_duplicate=is_duplicate,
                 status="completed",
                 time_spent_seconds=capped_time,
+                human_validated=True,  # Mark as validated by human
             )
             db.add(annotation)
             db.flush()
@@ -918,7 +959,7 @@ def save_annotation(
     image = db.query(Image).filter(Image.id == image_id).first()
     if not image:
         raise HTTPException(status_code=404, detail="Image not found")
-    
+
     # Block saving annotations for improper images
     if image.is_improper:
         raise HTTPException(status_code=400, detail="Cannot save annotations for improper images")
@@ -1042,19 +1083,20 @@ def mark_image_as_improper(
         .all()
     ]
     
-    # Check if image has completed annotations (locked)
-    completed_annotations = (
+    # Check if image has human-validated annotations (locked)
+    # Model predictions (human_validated=False) don't trigger the lock
+    human_validated_count = (
         db.query(Annotation)
         .filter(
             Annotation.image_id == image_id,
             Annotation.annotator_id == user.id,
             Annotation.category_id.in_(assigned_cat_ids_list),
-            Annotation.status == "completed",
+            Annotation.human_validated == True,
         )
         .count()
     )
     
-    if completed_annotations > 0:
+    if human_validated_count > 0:
         # Check if any annotation is sent for rework - if so, allow editing
         has_rework_request = (
             db.query(Annotation)
@@ -1201,6 +1243,28 @@ def get_edit_status(
     
     # If no completed annotations, can always edit
     if completed_annotations == 0:
+        return {
+            "can_edit": True,
+            "is_locked": False,
+            "pending_request": False,
+            "approved_request_id": None,
+            "is_rework": False,
+        }
+    
+    # Check if any annotations are human-validated
+    human_validated_count = (
+        db.query(Annotation)
+        .filter(
+            Annotation.image_id == image_id,
+            Annotation.category_id.in_(assigned_cat_ids),
+            Annotation.annotator_id == user.id,
+            Annotation.human_validated == True,
+        )
+        .count()
+    )
+    
+    # If no human-validated annotations, can still edit (model predictions only)
+    if human_validated_count == 0:
         return {
             "can_edit": True,
             "is_locked": False,
@@ -1391,4 +1455,63 @@ def get_time_limits(
     return {
         "max_annotation_time_seconds": _get_max_annotation_time(db),
         "max_rework_time_seconds": _get_max_rework_time(db),
+    }
+
+
+# ── AI-Generated Image Detection ────────────────────────────────
+
+from pydantic import BaseModel as PydanticBaseModel
+from datetime import datetime as dt
+
+class AIDetectionRequest(PydanticBaseModel):
+    is_ai_generated: bool
+    confidence: Optional[int] = None  # 0-100
+
+
+@router.put("/images/{image_id}/ai-detection")
+def mark_ai_generated(
+    image_id: int,
+    request: AIDetectionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """Mark an image as AI-generated or real."""
+    
+    image = db.query(Image).filter(Image.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    # Update AI detection fields
+    image.is_ai_generated = request.is_ai_generated
+    image.ai_detection_confidence = request.confidence
+    image.marked_ai_by = user.id
+    image.marked_ai_at = dt.now()
+    
+    db.commit()
+    
+    return {
+        "message": "AI detection status updated",
+        "image_id": image_id,
+        "is_ai_generated": request.is_ai_generated
+    }
+
+
+@router.get("/images/{image_id}/ai-detection")
+def get_ai_detection(
+    image_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_annotator),
+):
+    """Get AI detection status for an image."""
+    
+    image = db.query(Image).filter(Image.id == image_id).first()
+    if not image:
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    return {
+        "image_id": image_id,
+        "is_ai_generated": image.is_ai_generated,
+        "ai_detection_confidence": image.ai_detection_confidence,
+        "marked_ai_by": image.marked_ai_by,
+        "marked_ai_at": image.marked_ai_at.isoformat() if image.marked_ai_at else None
     }

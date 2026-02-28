@@ -5,22 +5,24 @@ from app.config import settings
 
 def _ensure_database_exists():
     """Create the database if it doesn't exist yet."""
-    # Parse the target DB name from the URL
-    # Format: postgresql://user:pass@host:port/dbname
-    base_url = settings.DATABASE_URL.rsplit("/", 1)[0]
-    db_name = settings.DATABASE_URL.rsplit("/", 1)[1]
+    # Only needed for PostgreSQL, SQLite creates the file automatically
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        # Parse the target DB name from the URL
+        # Format: postgresql://user:pass@host:port/dbname
+        base_url = settings.DATABASE_URL.rsplit("/", 1)[0]
+        db_name = settings.DATABASE_URL.rsplit("/", 1)[1]
 
-    # Connect to the default 'postgres' database to check/create
-    tmp_engine = create_engine(f"{base_url}/postgres", isolation_level="AUTOCOMMIT")
-    with tmp_engine.connect() as conn:
-        result = conn.execute(
-            text("SELECT 1 FROM pg_database WHERE datname = :name"),
-            {"name": db_name},
-        )
-        if not result.fetchone():
-            conn.execute(text(f'CREATE DATABASE "{db_name}"'))
-            print(f"[DB] Created database '{db_name}'")
-    tmp_engine.dispose()
+        # Connect to the default 'postgres' database to check/create
+        tmp_engine = create_engine(f"{base_url}/postgres", isolation_level="AUTOCOMMIT")
+        with tmp_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": db_name},
+            )
+            if not result.fetchone():
+                conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+                print(f"[DB] Created database '{db_name}'")
+        tmp_engine.dispose()
 
 
 _ensure_database_exists()

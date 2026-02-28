@@ -14,6 +14,7 @@ class Annotation(Base):
     is_duplicate = Column(Boolean, nullable=True)  # NULL = not answered
     status = Column(String(20), nullable=False, default="in_progress")  # in_progress, completed, skipped
     time_spent_seconds = Column(Integer, nullable=False, default=0)  # cumulative time spent annotating
+    human_validated = Column(Boolean, nullable=False, default=False)  # True after human validates/submits (model predictions start as False)
     is_rework = Column(Boolean, nullable=False, default=False)  # True if this is a rework submission
     rework_time_seconds = Column(Integer, nullable=False, default=0)  # time spent on rework
     review_status = Column(String(20), nullable=True)  # NULL=not reviewed, approved, rejected

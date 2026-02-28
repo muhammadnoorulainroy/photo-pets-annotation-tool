@@ -8,8 +8,8 @@ const PAGE_SIZE = 20;
 // Helper to get proxied image URL for Google Drive images
 const getImageUrl = (image) => {
   if (!image) return '';
-  // Use proxy endpoint for all images to bypass CORS
-  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${image.id}`;
+  // Use proxy endpoint for all images to bypass CORS, add timestamp to prevent caching
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${image.id}?t=${Date.now()}`;
 };
 
 function Pagination({ currentPage, totalPages, onPageChange }) {
@@ -165,7 +165,7 @@ export default function AnnotatorHome() {
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm">
               <span className="text-white text-lg">🐾</span>
             </div>
-            <div>
+          <div>
               <h1 className="text-lg font-bold text-gray-900">Photo Pets</h1>
               <p className="text-sm text-gray-500">Welcome back, <span className="font-medium text-indigo-600">{user?.username}</span></p>
             </div>
@@ -262,13 +262,13 @@ export default function AnnotatorHome() {
               )}
             </div>
             
-            <button
-              onClick={logout}
+          <button
+            onClick={logout}
               className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-white/60 rounded-xl transition cursor-pointer"
-            >
+          >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-              Sign Out
-            </button>
+            Sign Out
+          </button>
           </div>
         </div>
       </header>
@@ -338,7 +338,7 @@ export default function AnnotatorHome() {
               
               <div className="flex items-center gap-2">
                 {['all', 'pending', 'completed'].map((f) => (
-                  <button
+                <button
                     key={f}
                     onClick={() => handleFilterChange(f)}
                     className={`px-4 py-1.5 text-xs font-medium rounded-full border transition cursor-pointer capitalize ${
@@ -359,9 +359,9 @@ export default function AnnotatorHome() {
               <div className="flex flex-wrap gap-2">
                 {data.assigned_categories.map((cat) => (
                   <span
-                    key={cat.id}
+                  key={cat.id}
                     className="px-3 py-1.5 bg-white/80 text-indigo-700 text-sm font-medium rounded-lg border border-indigo-200/60 shadow-sm"
-                  >
+                >
                     {cat.name}
                   </span>
                 ))}
@@ -376,96 +376,138 @@ export default function AnnotatorHome() {
                 </div>
                 <h3 className="text-lg font-semibold text-gray-700">
                   {filter === 'pending' ? 'All images annotated!' : 'No images found'}
-                </h3>
+                  </h3>
                 <p className="text-gray-500 mt-1">
                   {filter === 'pending' ? 'Great work! Check back later for new images.' : 'Try changing the filter.'}
                 </p>
-              </div>
+                    </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 stagger-children">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 stagger-children">
                 {data.images.map((img) => {
                   const isComplete = img.overall_status === 'completed';
                   const isPartial = img.overall_status === 'partial';
                   const isImproper = img.is_improper;
                   const hasRework = img.has_rework;
+                  const isHumanValidated = img.is_human_validated;  // True if locked
+                  const categoryLabels = img.category_labels || {};
                   
                   return (
                     <button
                       key={img.id}
                       onClick={() => navigate(`/annotator/image/${img.id}`)}
-                      className={`group bg-white rounded-xl border overflow-hidden shadow-sm card-glow cursor-pointer text-left animate-slide-up ${hasRework ? 'border-orange-400 ring-2 ring-orange-200' : 'border-gray-200'}`}
+                      className={`group relative rounded-xl overflow-hidden shadow-md hover:shadow-xl cursor-pointer text-left animate-slide-up transition-all duration-300 ${
+                        hasRework 
+                          ? 'ring-3 ring-orange-400' 
+                          : isHumanValidated
+                            ? 'ring-2 ring-emerald-500'
+                          : isComplete 
+                            ? 'ring-2 ring-blue-400' 
+                            : 'ring-1 ring-gray-200 hover:ring-indigo-400'
+                      }`}
                     >
-                      <div className="relative aspect-square">
+                      {/* Large Image */}
+                      <div className="relative aspect-[4/3]">
                         <img
                           src={getImageUrl(img)}
                           alt={img.filename}
-                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                          className="w-full h-full object-cover"
                           loading="lazy"
                         />
-                        {/* Status badges - left side */}
-                        <div className="absolute top-2 left-2 flex flex-col gap-1">
-                          {isImproper && (
-                            <span className="px-2 py-1 bg-red-500 text-white text-xs font-medium rounded-full shadow-sm">
-                              Improper
+                        
+                        {/* Dark gradient overlay for text readability */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                        
+                        {/* Status badge - top left */}
+                        <div className="absolute top-3 left-3">
+                          {isImproper ? (
+                            <span className="px-2.5 py-1 bg-red-500 text-white text-xs font-bold rounded-lg shadow-lg">
+                              ⚠ Improper
                             </span>
-                          )}
-                          {hasRework && !isImproper && (
-                            <span className="px-2 py-1 bg-orange-500 text-white text-xs font-medium rounded-full shadow-sm animate-pulse">
+                          ) : hasRework ? (
+                            <span className="px-2.5 py-1 bg-orange-500 text-white text-xs font-bold rounded-lg shadow-lg animate-pulse">
                               🔄 Rework
                             </span>
-                          )}
-                        </div>
-                        <div className="absolute top-2 right-2">
-                          {isComplete ? (
-                            <span className="px-2 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-xs font-medium rounded-full shadow-sm">
-                              Done
+                          ) : isHumanValidated ? (
+                            <span className="px-2.5 py-1 bg-emerald-600 text-white text-xs font-bold rounded-lg shadow-lg flex items-center gap-1">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                              </svg>
+                              Validated
+                            </span>
+                          ) : isComplete ? (
+                            <span className="px-2.5 py-1 bg-blue-500 text-white text-xs font-bold rounded-lg shadow-lg">
+                              📝 To Review
                             </span>
                           ) : isPartial ? (
-                            <span className="px-2 py-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-medium rounded-full shadow-sm">
+                            <span className="px-2.5 py-1 bg-amber-500 text-white text-xs font-bold rounded-lg shadow-lg">
                               {img.completed_count}/{img.total_categories}
                             </span>
                           ) : (
-                            <span className="px-2 py-1 bg-gray-800/70 text-white text-xs font-medium rounded-full shadow-sm backdrop-blur-sm">
+                            <span className="px-2.5 py-1 bg-gray-800/80 text-white text-xs font-medium rounded-lg shadow-lg backdrop-blur-sm">
                               Pending
                             </span>
                           )}
                         </div>
                         
-                        {/* Hover overlay */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-indigo-600/30 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-center">
-                          <span className="px-4 py-2 bg-white text-indigo-600 text-sm font-semibold rounded-lg shadow-lg translate-y-2 group-hover:translate-y-0 transition-transform duration-300">
-                            {isComplete ? 'View / Edit' : 'Annotate'}
+                        {/* Filename - top right */}
+                        <div className="absolute top-3 right-3 max-w-[50%]">
+                          <span className="px-2 py-1 bg-black/50 text-white text-[10px] font-medium rounded-lg backdrop-blur-sm truncate block">
+                            {img.filename}
                           </span>
                         </div>
-                      </div>
-                      
-                      {/* Footer */}
-                      <div className="px-3 py-2.5 border-t border-gray-100">
-                        <p className="text-xs text-gray-500 truncate font-medium">{img.filename}</p>
-                        {/* Category completion indicators */}
-                        <div className="flex gap-1 mt-1.5">
-                          {data.assigned_categories.map((cat) => {
-                            const status = img.category_status[String(cat.id)];
-                            return (
-                              <div
-                                key={cat.id}
-                                title={`${cat.name}: ${status}`}
-                                className={`w-2 h-2 rounded-full transition-colors ${
-                                  status === 'completed' || status === 'completed_by_other'
-                                    ? 'bg-emerald-500'
-                                    : status === 'skipped'
-                                      ? 'bg-amber-400'
-                                      : 'bg-gray-300'
-                                }`}
-                              />
-                            );
-                          })}
+                        
+                        {/* Labels overlay - bottom */}
+                        <div className="absolute bottom-0 left-0 right-0 p-3">
+                          <div className="flex flex-wrap gap-1.5">
+                            {data.assigned_categories.map((cat) => {
+                              const labels = categoryLabels[String(cat.id)] || [];
+                              const status = img.category_status[String(cat.id)];
+                              const needsRework = status === 'in_progress' && hasRework;
+                              
+                              if (labels.length === 0) {
+                                return (
+                                  <span 
+                                    key={cat.id}
+                                    className="px-2 py-1 bg-gray-900/60 text-gray-400 text-[10px] rounded-md backdrop-blur-sm border border-gray-600/50"
+                                    title={`${cat.name}: Not set`}
+                                  >
+                                    {cat.name.split(' ')[0]}: <span className="italic">?</span>
+                                  </span>
+                                );
+                              }
+                              
+                              return labels.map((label, i) => (
+                                <span 
+                                  key={`${cat.id}-${i}`}
+                                  className={`px-2 py-1 text-[11px] font-medium rounded-md backdrop-blur-sm border ${
+                                    needsRework
+                                      ? 'bg-orange-500/80 text-white border-orange-400'
+                                      : label === 'None of the Above'
+                                        ? 'bg-gray-700/80 text-gray-300 border-gray-600'
+                                        : 'bg-indigo-500/80 text-white border-indigo-400'
+                                  }`}
+                                  title={cat.name}
+                                >
+                                  {label}
+                                </span>
+                              ));
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                        
+                        {/* Hover overlay with edit icon */}
+                        <div className="absolute inset-0 bg-indigo-600/30 opacity-0 group-hover:opacity-100 transition-all duration-300 flex items-center justify-center">
+                          <span className="w-14 h-14 bg-white rounded-full flex items-center justify-center shadow-2xl transform scale-90 group-hover:scale-100 transition-transform">
+                            <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
             )}
 
             {/* Pagination */}

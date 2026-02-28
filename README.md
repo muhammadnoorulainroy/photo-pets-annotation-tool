@@ -8,13 +8,46 @@ An image annotation tool for pet photo categorization. Annotators are assigned c
 - **Frontend:** React + Tailwind CSS + Vite
 - **Auth:** JWT-based with `admin` and `annotator` roles
 
-## Setup
+## 🚀 Quick Start with Makefile
+
+The easiest way to get started is using the provided Makefile:
+
+```bash
+# 1. Copy and configure environment files
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+# Edit .env files with your credentials
+
+# 2. Run complete setup (installs dependencies + creates database)
+make setup
+
+# 3. Start the application
+make start
+```
+
+That's it! The app will be available at http://localhost:5173
+
+**Common Commands:**
+- `make start` - Start both backend and frontend
+- `make stop` - Stop all services
+- `make status` - Check if services are running
+- `make restart` - Restart everything
+- `make help` - See all available commands
+
+See [MAKEFILE_GUIDE.md](MAKEFILE_GUIDE.md) for complete documentation or [MAKEFILE_CHEATSHEET.txt](MAKEFILE_CHEATSHEET.txt) for a quick reference.
+
+---
+
+## Manual Setup
+
+If you prefer manual setup without the Makefile:
 
 ### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL running locally
+- Make (optional, for Makefile usage)
 
 ### Environment Variables
 
@@ -29,13 +62,33 @@ cp frontend/.env.example frontend/.env
 
 | Variable | Description | Default |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/photo_pets` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://localhost/photo_pets_annotation` |
 | `SECRET_KEY` | JWT signing secret (change in production) | — |
 | `ALGORITHM` | JWT algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token expiry | `480` |
 | `CORS_ORIGINS` | Comma-separated allowed origins | `http://localhost:5173,http://localhost:3000` |
 | `BACKEND_URL` | Backend URL | `http://localhost:8000` |
 | `SEED_ADMINS` | JSON array of admin users to create on first run | See `.env.example` |
+
+**Google Drive Configuration (for image storage):**
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_TYPE` | Always `service_account` |
+| `GOOGLE_SERVICE_ACCOUNT_PROJECT_ID` | Google Cloud project ID |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID` | Private key ID from service account JSON |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | Private key (with `\n` for newlines) |
+| `GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL` | Service account email |
+| `GOOGLE_SERVICE_ACCOUNT_CLIENT_ID` | Service account client ID |
+| `GOOGLE_DRIVE_FOLDER_ID` | Folder ID from Google Drive URL |
+
+**OpenAI Configuration (for enhanced biometric compliance):**
+
+| Variable | Description |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI API key for GPT-4o vision (used for re-processing flagged images) |
+
+> **Note:** Share your Google Drive folder with the service account email to grant access.
 
 **Frontend (`frontend/.env`):**
 

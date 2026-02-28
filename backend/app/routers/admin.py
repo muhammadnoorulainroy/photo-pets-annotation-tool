@@ -1459,3 +1459,41 @@ def send_annotation_for_rework(
         "annotator_id": annotation.annotator_id,
         "categories_affected": len(all_annotations),
     }
+
+
+# ─── Auto-Processor Endpoints ─────────────────────────────────────
+
+@router.get('/auto-processor/status')
+def get_auto_processor_status(
+    admin: User = Depends(require_admin)
+):
+    """Get status of the auto-processor"""
+    from app.background_tasks import auto_processor
+    
+    return {
+        'is_running': auto_processor.is_running,
+        'last_run': auto_processor.last_run.isoformat() if auto_processor.last_run else None,
+        'processed_count': auto_processor.processed_count,
+        'failed_count': auto_processor.failed_count,
+    }
+
+
+@router.post('/auto-processor/trigger')
+async def trigger_auto_processor(
+    admin: User = Depends(require_admin)
+):
+    """Manually trigger the auto-processor"""
+    from app.background_tasks import auto_processor
+    
+    if auto_processor.is_running:
+        raise HTTPException(
+            status_code=400,
+            detail='Auto-processor is already running'
+        )
+    
+    # Run in background
+    import asyncio
+    asyncio.create_task(auto_processor.run_processing_cycle())
+    
+    return {'message': 'Auto-processor triggered successfully'}
+

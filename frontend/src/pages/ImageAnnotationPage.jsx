@@ -6,7 +6,8 @@ import api from '../api/client';
 // Helper to get proxied image URL for Google Drive images
 const getImageUrl = (imageId) => {
   if (!imageId) return '';
-  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
+  // Add timestamp to prevent caching of processed images
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}?t=${Date.now()}`;
 };
 
 function CategoryDropdown({ category, annotation, completedByOther, onChange, disabled }) {
@@ -217,6 +218,10 @@ export default function ImageAnnotationPage() {
   
   const [showEditRequestModal, setShowEditRequestModal] = useState(false);
   const [requestingEdit, setRequestingEdit] = useState(false);
+  
+  // AI-generated detection state
+  const [isAIGenerated, setIsAIGenerated] = useState(null); // null, true, or false
+  const [savingAIStatus, setSavingAIStatus] = useState(false);
 
   // Time limit settings (fetched from API)
   const [maxAnnotationTime, setMaxAnnotationTime] = useState(120);
@@ -353,6 +358,14 @@ export default function ImageAnnotationPage() {
       });
       setPendingChanges(initial);
       
+      // Load AI-generated status
+      try {
+        const aiRes = await api.get(`/annotator/images/${id}/ai-detection`);
+        setIsAIGenerated(aiRes.data.is_ai_generated);
+      } catch (err) {
+        setIsAIGenerated(null); // Default to unknown
+      }
+      
       // Detect if this is a rework - check both top-level flag and category annotations
       const hasRework = res.data.is_rework || res.data.categories.some(cat => 
         cat.annotation?.review_status === 'rework_requested' || cat.annotation?.is_rework
@@ -474,6 +487,20 @@ export default function ImageAnnotationPage() {
       setError(err.response?.data?.detail || 'Failed to submit request');
     } finally {
       setRequestingEdit(false);
+    }
+  };
+
+  const handleAIStatusChange = async (value) => {
+    setSavingAIStatus(true);
+    try {
+      await api.put(`/annotator/images/${imageId}/ai-detection`, {
+        is_ai_generated: value
+      });
+      setIsAIGenerated(value);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to update AI status');
+    } finally {
+      setSavingAIStatus(false);
     }
   };
 
@@ -679,21 +706,31 @@ export default function ImageAnnotationPage() {
             )}
 
             {isLocked && !isImproper && (
-              <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm text-amber-700 font-medium">🔒 View Only</p>
-                    <p className="text-xs text-amber-600 mt-1">
-                      {hasPendingRequest 
-                        ? 'Edit request pending admin approval.' 
-                        : 'This image has been annotated. You can view but not edit.'}
-                    </p>
+              <div className="mx-4 mt-3 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl px-5 py-4 shadow-sm">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                      <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm text-amber-800 font-semibold">This image is validated & locked</p>
+                      <p className="text-xs text-amber-600 mt-0.5">
+                        {hasPendingRequest 
+                          ? '⏳ Your edit request is pending admin approval' 
+                          : 'You can view annotations but cannot make changes'}
+                      </p>
+                    </div>
                   </div>
                   {!hasPendingRequest && (
                     <button
                       onClick={() => setShowEditRequestModal(true)}
-                      className="shrink-0 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 transition cursor-pointer"
+                      className="shrink-0 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl text-sm font-semibold hover:from-amber-600 hover:to-orange-600 transition shadow-md cursor-pointer flex items-center gap-2"
                     >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
                       Request Edit
                     </button>
                   )}
@@ -715,6 +752,85 @@ export default function ImageAnnotationPage() {
             </div>
 
             <div className="border-t border-gray-200 px-5 py-4 bg-gradient-to-t from-gray-50 to-white space-y-3">
+              {/* AI-Generated Detection Toggle */}
+              {!isImproper && (
+                <div className="bg-white border-2 border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                      </svg>
+                      <h3 className="font-semibold text-gray-900 text-sm">Is this image AI-generated?</h3>
+                    </div>
+                    {savingAIStatus && (
+                      <span className="text-xs text-gray-500 italic">Saving...</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAIStatusChange(false)}
+                      disabled={savingAIStatus || !canEdit}
+                      className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition border-2 cursor-pointer ${
+                        isAIGenerated === false
+                          ? 'bg-green-50 border-green-500 text-green-700'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center border-2 ${
+                          isAIGenerated === false ? 'border-green-500' : 'border-gray-300'
+                        }`}>
+                          {isAIGenerated === false && (
+                            <div className="w-2 h-2 rounded-full bg-green-500" />
+                          )}
+                        </div>
+                        <span>Real</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => handleAIStatusChange(true)}
+                      disabled={savingAIStatus || !canEdit}
+                      className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition border-2 cursor-pointer ${
+                        isAIGenerated === true
+                          ? 'bg-purple-50 border-purple-500 text-purple-700'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center border-2 ${
+                          isAIGenerated === true ? 'border-purple-500' : 'border-gray-300'
+                        }`}>
+                          {isAIGenerated === true && (
+                            <div className="w-2 h-2 rounded-full bg-purple-500" />
+                          )}
+                        </div>
+                        <span>AI-Generated</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => handleAIStatusChange(null)}
+                      disabled={savingAIStatus || !canEdit}
+                      className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition border-2 cursor-pointer ${
+                        isAIGenerated === null
+                          ? 'bg-gray-50 border-gray-400 text-gray-700'
+                          : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center border-2 ${
+                          isAIGenerated === null ? 'border-gray-400' : 'border-gray-300'
+                        }`}>
+                          {isAIGenerated === null && (
+                            <div className="w-2 h-2 rounded-full bg-gray-400" />
+                          )}
+                        </div>
+                        <span>Unknown</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {!isImproper && !isLocked && (
                 <button
                   onClick={() => setShowImproperModal(true)}

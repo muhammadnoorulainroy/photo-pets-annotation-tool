@@ -2,13 +2,15 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
+import MasterPipelineTab from '../components/MasterPipelineTab';
 
 const PAGE_SIZE = 10;
 
 // Helper to get proxied image URL for Google Drive images
 const getImageUrl = (imageId) => {
   if (!imageId) return '';
-  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}`;
+  // Add timestamp to prevent caching of processed images
+  return `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/images/proxy/${imageId}?t=${Date.now()}`;
 };
 
 /* ─── Reusable UI Helpers ──────────────────────────────────── */
@@ -393,32 +395,32 @@ function UsersTab() {
                       <span className="font-medium text-gray-900">{u.username}</span>
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-gray-600">{u.full_name || '—'}</td>
-                  <td className="px-5 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-                    }`}>
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 text-gray-600">
-                    {u.role === 'annotator' ? (
-                      <div className="flex flex-wrap gap-1">
-                        {u.assigned_category_ids.length === 0 ? (
-                          <span className="text-gray-400">None</span>
-                        ) : (
-                          u.assigned_category_ids.map((catId) => {
-                            const cat = categories.find((c) => c.id === catId);
-                            return (
-                              <span key={catId} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">
-                                {cat?.name || catId}
-                              </span>
-                            );
-                          })
-                        )}
-                      </div>
-                    ) : '—'}
-                  </td>
+                <td className="px-5 py-3 text-gray-600">{u.full_name || '—'}</td>
+                <td className="px-5 py-3">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {u.role}
+                  </span>
+                </td>
+                <td className="px-5 py-3 text-gray-600">
+                  {u.role === 'annotator' ? (
+                    <div className="flex flex-wrap gap-1">
+                      {u.assigned_category_ids.length === 0 ? (
+                        <span className="text-gray-400">None</span>
+                      ) : (
+                        u.assigned_category_ids.map((catId) => {
+                          const cat = categories.find((c) => c.id === catId);
+                          return (
+                            <span key={catId} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full">
+                              {cat?.name || catId}
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : '—'}
+                </td>
                   <td className="px-5 py-3">
                     {u.role === 'annotator' ? (
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -459,19 +461,19 @@ function UsersTab() {
                       )
                     ) : '—'}
                   </td>
-                  <td className="px-5 py-3">
-                    <span className={`text-xs font-medium ${u.is_active ? 'text-green-600' : 'text-red-500'}`}>
-                      {u.is_active ? 'Active' : 'Disabled'}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3">
+                <td className="px-5 py-3">
+                  <span className={`text-xs font-medium ${u.is_active ? 'text-green-600' : 'text-red-500'}`}>
+                    {u.is_active ? 'Active' : 'Disabled'}
+                  </span>
+                </td>
+                <td className="px-5 py-3">
                     <div className="flex gap-2 flex-wrap">
-                      {u.role === 'annotator' && (
+                    {u.role === 'annotator' && (
                         <>
-                          <button
-                            onClick={() => openAssignment(u)}
-                            className="text-indigo-600 hover:text-indigo-800 text-xs font-medium cursor-pointer"
-                          >
+                      <button
+                        onClick={() => openAssignment(u)}
+                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium cursor-pointer"
+                      >
                             Categories
                           </button>
                           <button
@@ -486,19 +488,19 @@ function UsersTab() {
                               className="text-amber-600 hover:text-amber-800 text-xs font-medium cursor-pointer"
                             >
                               Clear
-                            </button>
+                      </button>
                           )}
                         </>
-                      )}
-                      <button
-                        onClick={() => toggleActive(u)}
-                        className={`text-xs font-medium cursor-pointer ${u.is_active ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800'}`}
-                      >
-                        {u.is_active ? 'Disable' : 'Enable'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                    )}
+                    <button
+                      onClick={() => toggleActive(u)}
+                      className={`text-xs font-medium cursor-pointer ${u.is_active ? 'text-red-500 hover:text-red-700' : 'text-green-600 hover:text-green-800'}`}
+                    >
+                      {u.is_active ? 'Disable' : 'Enable'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
               );
             })}
           </tbody>
@@ -1135,7 +1137,7 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
             <div className="flex items-center gap-3">
-              <h3 className="text-sm font-semibold text-gray-900">Annotations</h3>
+            <h3 className="text-sm font-semibold text-gray-900">Annotations</h3>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded">Esc to close</span>
@@ -1212,13 +1214,13 @@ function ImageDetailModal({ row, categories, tableImages, onApprove, onSaveEdits
               </button>
             ) : pendingAnnotations.length > 0 ? (
               <>
-                <button
-                  onClick={handleApproveAll}
-                  disabled={saving}
-                  className="flex-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 cursor-pointer"
-                >
+              <button
+                onClick={handleApproveAll}
+                disabled={saving}
+                className="flex-1 px-4 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 cursor-pointer"
+              >
                   {saving ? 'Approving...' : `Approve All (${pendingAnnotations.length})`}
-                </button>
+              </button>
                 <button
                   onClick={() => onRework(pendingAnnotations[0]?.annotation_id)}
                   disabled={saving}
@@ -1800,7 +1802,7 @@ function ReviewTab() {
                                           ? 'border-orange-300 bg-orange-50/50 hover:border-orange-400'
                                           : cell.review_status === 'rework_completed'
                                             ? 'border-purple-300 bg-purple-50/50 hover:border-purple-400'
-                                            : 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
+                                        : 'border-amber-200 bg-amber-50/30 hover:border-amber-300'
                                     }`}
                                   >
                                     <div className="flex items-center gap-1 mb-1">
@@ -2728,6 +2730,302 @@ function AnnotationLogTab() {
 
 // ─── Settings Tab ────────────────────────────────────────────
 
+// ─── Compliance Tab (Biometric Compliance) ──────────────────────
+
+function ComplianceTab() {
+  const [flaggedImages, setFlaggedImages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [selectedImages, setSelectedImages] = useState([]);
+  const [message, setMessage] = useState(null);
+
+  useEffect(() => {
+    fetchFlaggedImages();
+  }, []);
+
+  const fetchFlaggedImages = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/compliance/flagged-images');
+      setFlaggedImages(res.data.flagged_images || []);
+    } catch (err) {
+      console.error('Failed to fetch flagged images:', err);
+    }
+    setLoading(false);
+  };
+
+  const handleProcessImages = async () => {
+    if (selectedImages.length === 0) {
+      setMessage({ type: 'error', text: 'Please select at least one image to process' });
+      return;
+    }
+
+    setProcessing(true);
+    setMessage(null);
+    try {
+      const res = await api.post('/admin/compliance/process-images', {
+        image_ids: selectedImages,
+      });
+      setMessage({ 
+        type: 'success', 
+        text: `Successfully processed ${res.data.processed_count} images!` 
+      });
+      setSelectedImages([]);
+      fetchFlaggedImages();
+    } catch (err) {
+      setMessage({ 
+        type: 'error', 
+        text: err.response?.data?.detail || 'Failed to process images' 
+      });
+    }
+    setProcessing(false);
+  };
+
+  const handleRevertImage = async (imageId) => {
+    if (!confirm('Revert this image to the original unprocessed version? This will undo any blurring.')) {
+      return;
+    }
+
+    try {
+      const res = await api.post(`/admin/compliance/images/${imageId}/revert`, {
+        reason: 'Animal wrongly blurred - flagged by annotator'
+      });
+      
+      setMessage({ 
+        type: 'success', 
+        text: `Image reverted to original. Annotators will now see the unblurred version.` 
+      });
+      
+      // Refresh the list
+      fetchFlaggedImages();
+    } catch (err) {
+      setMessage({ 
+        type: 'error', 
+        text: err.response?.data?.detail || 'Failed to revert image' 
+      });
+    }
+  };
+
+  const handleReprocessImage = async (imageId) => {
+    if (!confirm('Re-process this image with OpenAI for better face detection? This may take 10-20 seconds.')) {
+      return;
+    }
+
+    setMessage({ type: 'info', text: 'Processing with OpenAI... This may take a moment.' });
+
+    try {
+      const res = await api.post(`/admin/compliance/images/${imageId}/reprocess`, {
+        use_openai: true,
+        reason: 'Human face missed - using OpenAI for better detection'
+      });
+      
+      setMessage({ 
+        type: 'success', 
+        text: `Image reprocessed! Detected and blurred ${res.data.faces_detected} face(s) using OpenAI.` 
+      });
+      
+      // Refresh the list
+      setTimeout(() => fetchFlaggedImages(), 1000);
+    } catch (err) {
+      setMessage({ 
+        type: 'error', 
+        text: err.response?.data?.detail || 'Failed to reprocess image' 
+      });
+    }
+  };
+
+  const toggleImageSelection = (imageId) => {
+    setSelectedImages(prev => 
+      prev.includes(imageId) 
+        ? prev.filter(id => id !== imageId)
+        : [...prev, imageId]
+    );
+  };
+
+  const selectAll = () => {
+    if (selectedImages.length === flaggedImages.length) {
+      setSelectedImages([]);
+    } else {
+      setSelectedImages(flaggedImages.map(img => img.image_id));
+    }
+  };
+
+  if (loading) {
+    return <LoadingSkeleton rows={6} />;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <svg className="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            Biometric Compliance
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Images flagged by annotators for human face visibility or animal face blur issues
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {selectedImages.length > 0 && (
+            <button
+              onClick={handleProcessImages}
+              disabled={processing}
+              className="px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm font-medium rounded-xl hover:from-indigo-600 hover:to-purple-600 transition shadow-sm disabled:opacity-50 cursor-pointer flex items-center gap-2"
+            >
+              {processing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Process {selectedImages.length} Image{selectedImages.length > 1 ? 's' : ''}
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {message && (
+        <div className={`p-4 rounded-xl border animate-slide-down ${
+          message.type === 'success' 
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+            : 'bg-red-50 border-red-200 text-red-700'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Info Box */}
+      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-100 p-5">
+        <h4 className="text-sm font-semibold text-indigo-900 flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          About Compliance Processing
+        </h4>
+        <ul className="mt-2 space-y-1 text-sm text-indigo-800">
+          <li>• Annotators flag images with <strong>"Human face visible"</strong> or <strong>"Animal face blurred"</strong> issues</li>
+          <li>• The pipeline uses AI to detect and blur human faces while preserving animal faces</li>
+          <li>• After processing, images are automatically sent back to annotators for re-annotation</li>
+          <li>• Processing typically takes 2-5 seconds per image</li>
+        </ul>
+      </div>
+
+      {flaggedImages.length === 0 ? (
+        <div className="text-center py-20 bg-gradient-to-b from-gray-50 to-white rounded-2xl border border-gray-200">
+          <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-1">All Clear!</h3>
+          <p className="text-sm text-gray-500">No images flagged for compliance issues</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Header */}
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={selectedImages.length === flaggedImages.length && flaggedImages.length > 0}
+                onChange={selectAll}
+                className="w-4 h-4 text-indigo-600 rounded cursor-pointer"
+              />
+              <h3 className="text-sm font-semibold text-gray-900">
+                {flaggedImages.length} Flagged Image{flaggedImages.length > 1 ? 's' : ''}
+              </h3>
+            </div>
+            {selectedImages.length > 0 && (
+              <span className="text-xs text-indigo-600 font-medium">
+                {selectedImages.length} selected
+              </span>
+            )}
+          </div>
+
+          {/* Image List */}
+          <div className="divide-y divide-gray-100">
+            {flaggedImages.map((img) => (
+              <div
+                key={img.image_id}
+                className={`p-4 hover:bg-gray-50 transition ${
+                  selectedImages.includes(img.image_id) ? 'bg-indigo-50' : ''
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <input
+                    type="checkbox"
+                    checked={selectedImages.includes(img.image_id)}
+                    onChange={() => toggleImageSelection(img.image_id)}
+                    className="mt-1 w-4 h-4 text-indigo-600 rounded cursor-pointer"
+                  />
+                  <img
+                    src={getImageUrl(img.image_id)}
+                    alt={img.filename}
+                    className="w-24 h-24 object-cover rounded-xl border border-gray-200"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-semibold text-gray-900 truncate">{img.filename}</h4>
+                    <div className="mt-2 space-y-1">
+                      {img.flagged_for_human && (
+                        <div className="flex items-start gap-2 text-xs">
+                          <Badge variant="danger">Human Issue</Badge>
+                          <span className="text-gray-600">{img.human_flag_text}</span>
+                        </div>
+                      )}
+                      {img.flagged_for_animal && (
+                        <div className="flex items-start gap-2 text-xs">
+                          <Badge variant="warning">Animal Issue</Badge>
+                          <span className="text-gray-600">{img.animal_flag_text}</span>
+                        </div>
+                      )}
+                    </div>
+                    {img.compliance_status && (
+                      <div className="mt-2">
+                        <Badge variant="info">Status: {img.compliance_status}</Badge>
+                      </div>
+                    )}
+                    
+                    {/* Action buttons */}
+                    <div className="mt-3 flex gap-2">
+                      {img.flagged_for_animal && (
+                        <button
+                          onClick={() => handleRevertImage(img.image_id)}
+                          className="px-3 py-1.5 text-xs bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition font-medium"
+                        >
+                          🔄 Revert to Original
+                        </button>
+                      )}
+                      {img.flagged_for_human && (
+                        <button
+                          onClick={() => handleReprocessImage(img.image_id)}
+                          className="px-3 py-1.5 text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg transition font-medium"
+                        >
+                          🤖 Re-process with OpenAI
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Settings Tab ───────────────────────────────────────────────
+
 function SettingsTab() {
   const [settings, setSettings] = useState({
     max_annotation_time_seconds: 120,
@@ -2901,7 +3199,7 @@ export default function AdminDashboard() {
   const { user, logout } = useAuth();
 
   // Derive active tab from URL path: /admin/review -> 'review', /admin -> 'users'
-  const VALID_TABS = ['users', 'progress', 'review', 'completion', 'images', 'improper', 'edit-requests', 'annotation-log', 'settings'];
+  const VALID_TABS = ['users', 'progress', 'review', 'completion', 'images', 'improper', 'edit-requests', 'annotation-log', 'settings', 'pipeline'];
   const pathSegment = location.pathname.replace(/^\/admin\/?/, '').split('/')[0] || 'users';
   const activeTab = VALID_TABS.includes(pathSegment) ? pathSegment : 'users';
 
@@ -2937,6 +3235,12 @@ export default function AdminDashboard() {
     { key: 'settings', label: 'Settings', icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
     )},
+    { key: 'pipeline', label: 'Master Pipeline', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+    )},
+    { key: 'compliance', label: 'Compliance', icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+    )},
   ];
 
   return (
@@ -2949,17 +3253,17 @@ export default function AdminDashboard() {
             <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-sm">
               <span className="text-white text-sm">🐾</span>
             </div>
-            <div>
+          <div>
               <h1 className="text-sm font-bold text-gray-900 leading-tight">Photo Pets</h1>
               <p className="text-[11px] text-gray-400 font-medium">Admin Dashboard</p>
-            </div>
+          </div>
           </div>
         </div>
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
           {tabs.map((tab) => (
-            <button
+          <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${
@@ -2970,7 +3274,7 @@ export default function AdminDashboard() {
             >
               <span className={activeTab === tab.key ? 'text-indigo-600' : 'text-gray-400'}>{tab.icon}</span>
               {tab.label}
-            </button>
+          </button>
           ))}
         </nav>
 
@@ -2981,7 +3285,7 @@ export default function AdminDashboard() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-900 truncate">{user?.username}</p>
               <p className="text-[11px] text-gray-400">Administrator</p>
-            </div>
+        </div>
             <button
               onClick={logout}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition cursor-pointer"
@@ -2989,22 +3293,24 @@ export default function AdminDashboard() {
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
             </button>
-          </div>
+      </div>
         </div>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 min-w-0">
         <div className={activeTab === 'review' ? 'p-5' : 'p-6'}>
-          {activeTab === 'users' && <UsersTab />}
-          {activeTab === 'progress' && <ProgressTab />}
-          {activeTab === 'review' && <ReviewTab />}
-          {activeTab === 'completion' && <ImageCompletionTab />}
-          {activeTab === 'images' && <ImagesTab />}
+            {activeTab === 'users' && <UsersTab />}
+            {activeTab === 'progress' && <ProgressTab />}
+            {activeTab === 'review' && <ReviewTab />}
+            {activeTab === 'completion' && <ImageCompletionTab />}
+            {activeTab === 'images' && <ImagesTab />}
           {activeTab === 'improper' && <ImproperImagesTab />}
           {activeTab === 'edit-requests' && <EditRequestsTab />}
           {activeTab === 'annotation-log' && <AnnotationLogTab />}
           {activeTab === 'settings' && <SettingsTab />}
+          {activeTab === 'pipeline' && <MasterPipelineTab />}
+          {activeTab === 'compliance' && <ComplianceTab />}
         </div>
       </main>
     </div>
