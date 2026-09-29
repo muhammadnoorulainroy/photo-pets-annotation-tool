@@ -19,3 +19,7 @@ frontend/dist/
 .idea/
 *.swp
 *.swo
+
+# Local secrets and data
+.env.bak*
+*.db
